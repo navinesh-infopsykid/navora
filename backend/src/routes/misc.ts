@@ -1,0 +1,78 @@
+import express, { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../lib/db";
+import { parse } from "../lib/validation";
+import { getDashboard } from "../services/dashboardService";
+import { getSettings, publicSettings, updateSettings } from "../services/settingsService";
+import * as whatsapp from "../services/whatsappService";
+
+const router = Router();
+
+// GET /api/health -> checks that the database is reachable
+router.get("/health", async (_req, res) => {
+  await prisma.$queryRaw`SELECT 1`;
+  res.json({ ok: true, database: "connected" });
+});
+
+router.get("/dashboard", async (_req, res) => {
+  res.json(await getDashboard());
+});
+
+router.get("/settings", async (_req, res) => {
+  res.json(publicSettings(await getSettings()));
+});
+
+router.put("/settings", async (req, res) => {
+  const body = parse(
+    z.object({
+      businessName: z.string().trim().min(1, "Business name is required").max(120),
+      businessAddress: z.string().max(300).default(""),
+      businessPhone: z.string().max(30).default(""),
+      currency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/, "Currency must be a 3-letter code such as INR")
+        .default("INR"),
+      invoiceFooter: z.string().max(300).default(""),
+    }),
+    req.body,
+  );
+  res.json(publicSettings(await updateSettings(body)));
+});
+
+// Is automatic WhatsApp sending available? (Never returns the token.)
+router.get("/whatsapp/status", async (_req, res) => {
+  res.json(await whatsapp.getCloudStatus());
+});
+
+// Meta webhook verification (GET) and delivery status updates (POST).
+router.get("/whatsapp/webhook", (req, res) => {
+  const mode = req.query["hub.mode"] as string | undefined;
+  const token = req.query["hub.verify_token"] as string | undefined;
+  const challenge = req.query["hub.challenge"] as string | undefined;
+  if (whatsapp.verifyWebhookSubscription(mode, token)) {
+    res.type("text/plain").send(challenge ?? "");
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+// Raw body is needed to verify Meta's signature.
+router.post("/whatsapp/webhook", express.raw({ type: "*/*", limit: "1mb" }), async (req, res) => {
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+  if (!whatsapp.isValidWebhookSignature(raw, req.get("x-hub-signature-256"))) {
+    res.sendStatus(401);
+    return;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw.toString("utf8"));
+  } catch {
+    res.sendStatus(400);
+    return;
+  }
+  await whatsapp.handleWebhookPayload(payload);
+  res.sendStatus(200);
+});
+
+export default router;

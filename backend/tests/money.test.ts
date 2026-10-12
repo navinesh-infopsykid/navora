@@ -1,0 +1,81 @@
+import { describe, expect, it } from "vitest";
+import { HttpError } from "../src/lib/errors";
+import { calculateTotals, formatPaise, percentToBasisPoints, rupeesToPaise } from "../src/lib/money";
+
+const lines = [
+  { unitPricePaise: 54_900, quantity: 3 }, // Rs. 1,647.00
+  { unitPricePaise: 16_250, quantity: 1 }, // Rs.   162.50
+]; // subtotal Rs. 1,809.50
+
+describe("rupee / paise conversion", () => {
+  it("converts rupee strings to paise without floating point errors", () => {
+    expect(rupeesToPaise("0.1")).toBe(10);
+    expect(rupeesToPaise("0.29")).toBe(29); // 0.29 * 100 = 28.999999999999996 in floating point
+    expect(rupeesToPaise("1,234.5")).toBe(123_450);
+    expect(rupeesToPaise("49")).toBe(4_900);
+  });
+
+  it("rejects invalid amounts", () => {
+    expect(() => rupeesToPaise("12.345")).toThrow(HttpError);
+    expect(() => rupeesToPaise("-5")).toThrow(HttpError);
+    expect(() => rupeesToPaise("abc")).toThrow(HttpError);
+  });
+
+  it("converts percentages to basis points", () => {
+    expect(percentToBasisPoints("12.5")).toBe(1_250);
+    expect(percentToBasisPoints("100")).toBe(10_000);
+  });
+
+  it("formats paise with Indian grouping", () => {
+    expect(formatPaise(12_345_678)).toBe("1,23,456.78");
+    expect(formatPaise(5)).toBe("0.05");
+  });
+});
+
+describe("calculateTotals — discounts", () => {
+  it("calculates subtotal and total with no discount", () => {
+    const t = calculateTotals(lines, "NONE", 0);
+    expect(t.lineTotals).toEqual([164_700, 16_250]);
+    expect(t.subtotalPaise).toBe(180_950);
+    expect(t.discountPaise).toBe(0);
+    expect(t.totalPaise).toBe(180_950);
+  });
+
+  it("applies a fixed rupee discount", () => {
+    const t = calculateTotals(lines, "FIXED", 9_950); // Rs. 99.50
+    expect(t.discountPaise).toBe(9_950);
+    expect(t.totalPaise).toBe(171_000);
+  });
+
+  it("applies a percentage discount and rounds to the nearest paisa", () => {
+    const t = calculateTotals(lines, "PERCENT", 1_000); // 10%
+    expect(t.discountPaise).toBe(18_095);
+    expect(t.totalPaise).toBe(162_855);
+
+    // 12.5% of Rs. 0.99 = 12.375 paise -> 12 paise
+    expect(calculateTotals([{ unitPricePaise: 99, quantity: 1 }], "PERCENT", 1_250).discountPaise).toBe(12);
+    // 50% of 1 paisa = 0.5 -> rounds up to 1
+    expect(calculateTotals([{ unitPricePaise: 1, quantity: 1 }], "PERCENT", 5_000).discountPaise).toBe(1);
+  });
+
+  it("allows a 100% discount (free bill) and a discount equal to the subtotal", () => {
+    expect(calculateTotals(lines, "PERCENT", 10_000).totalPaise).toBe(0);
+    expect(calculateTotals(lines, "FIXED", 180_950).totalPaise).toBe(0);
+  });
+
+  it("rejects a fixed discount larger than the subtotal", () => {
+    expect(() => calculateTotals(lines, "FIXED", 180_951)).toThrow(/more than the subtotal/);
+  });
+
+  it("rejects a percentage above 100% and negative discounts", () => {
+    expect(() => calculateTotals(lines, "PERCENT", 10_001)).toThrow(/100%/);
+    expect(() => calculateTotals(lines, "FIXED", -1)).toThrow(HttpError);
+    expect(() => calculateTotals(lines, "FIXED", 10.5)).toThrow(HttpError);
+  });
+
+  it("rejects empty bills and bad quantities", () => {
+    expect(() => calculateTotals([], "NONE", 0)).toThrow(/at least one item/);
+    expect(() => calculateTotals([{ unitPricePaise: 100, quantity: 0 }], "NONE", 0)).toThrow(/Quantity/);
+    expect(() => calculateTotals([{ unitPricePaise: 100, quantity: 1.5 }], "NONE", 0)).toThrow(/Quantity/);
+  });
+});

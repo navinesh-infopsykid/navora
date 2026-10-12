@@ -1,0 +1,31 @@
+{
+  "name": "simple-billing-software",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight billing and inventory management for small shops (React + Express + PostgreSQL/Supabase + Prisma).",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "db:generate": "npm run db:generate -w backend",
+    "db:migrate": "npm run db:migrate -w backend",
+    "db:migrate:dev": "npm run db:migrate:dev -w backend",
+    "db:seed": "npm run db:seed -w backend",
+    "db:studio": "npm run db:studio -w backend",
+    "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend",
+    "test": "npm run test -w backend",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "npm run start -w backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "prisma": "^8.0.0-rc.22"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

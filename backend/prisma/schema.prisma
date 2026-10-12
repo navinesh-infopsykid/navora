@@ -1,0 +1,190 @@
+// Prisma schema for simple-billing-software.
+//
+// MONEY RULE: every amount is stored as an integer number of PAISE
+// (1 rupee = 100 paise). This avoids floating-point rounding errors.
+// Example: Rs. 49.50 is stored as 4950.
+
+generator client {
+  provider   = "prisma-client-js"
+  // "client" = Rust-free Prisma Client. Queries run through the `pg`
+  // driver (see src/lib/db.ts), so no query-engine binary is needed.
+  engineType = "client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Supabase: pooled connection (port 6543) used by the running app.
+  url       = env("DATABASE_URL")
+  // Supabase: direct connection (port 5432) used by migrations.
+  directUrl = env("DIRECT_URL")
+}
+
+enum DiscountType {
+  NONE
+  FIXED // rupee amount, stored in paise
+  PERCENT // percentage, stored in basis points (12.5% = 1250)
+}
+
+enum PaymentStatus {
+  PAID
+  UNPAID
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  OTHER
+}
+
+enum StockMovementType {
+  ADJUSTMENT // manual increase/decrease from the Stock Adjustment page
+  SALE // automatic deduction when an invoice is finalized
+}
+
+enum WhatsAppMode {
+  MANUAL_LINK // we only generated a wa.me link; delivery is unknown
+  CLOUD_API // sent through the official WhatsApp Business Cloud API
+}
+
+enum WhatsAppStatus {
+  LINK_GENERATED // manual: link opened in the browser, NOT a delivery confirmation
+  ACCEPTED // cloud API accepted the message (not yet delivered)
+  SENT // webhook: sent from WhatsApp servers
+  DELIVERED // webhook: delivered to customer's phone
+  READ // webhook: read by customer
+  FAILED // API call or delivery failed
+}
+
+model Product {
+  id                Int      @id @default(autoincrement())
+  name              String
+  sku               String?  @unique
+  pricePaise        Int
+  stock             Int      @default(0)
+  lowStockThreshold Int      @default(5)
+  description       String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  invoiceItems   InvoiceItem[]
+  stockMovements StockMovement[]
+
+  @@index([name])
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  name      String
+  // Normalised digits with country code, e.g. "919876543210". Optional.
+  phone     String?   @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  invoices  Invoice[]
+}
+
+model Invoice {
+  id            Int            @id @default(autoincrement())
+  invoiceNumber String         @unique
+  customerId    Int
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  // Snapshots: the invoice keeps the name/phone used at billing time.
+  customerName  String
+  customerPhone String?
+  invoiceDate   DateTime       @default(now())
+  subtotalPaise Int
+  discountType  DiscountType   @default(NONE)
+  // FIXED: paise. PERCENT: basis points (1% = 100). NONE: 0.
+  discountValue Int            @default(0)
+  discountPaise Int            @default(0)
+  totalPaise    Int
+  paymentStatus PaymentStatus
+  paymentMethod PaymentMethod
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  items            InvoiceItem[]
+  payments         Payment[]
+  stockMovements   StockMovement[]
+  whatsAppMessages WhatsAppMessage[]
+
+  @@index([invoiceDate])
+  @@index([paymentStatus])
+  @@index([customerName])
+}
+
+model InvoiceItem {
+  id             Int     @id @default(autoincrement())
+  invoiceId      Int
+  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId      Int
+  product        Product @relation(fields: [productId], references: [id])
+  // Historical snapshots: never change after the invoice is created.
+  productName    String
+  sku            String?
+  unitPricePaise Int
+  quantity       Int
+  lineTotalPaise Int
+
+  @@unique([invoiceId, productId])
+}
+
+model Payment {
+  id          Int           @id @default(autoincrement())
+  invoiceId   Int
+  invoice     Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amountPaise Int
+  method      PaymentMethod
+  paidAt      DateTime      @default(now())
+  note        String?
+}
+
+model StockMovement {
+  id            Int               @id @default(autoincrement())
+  productId     Int
+  product       Product           @relation(fields: [productId], references: [id])
+  type          StockMovementType
+  previousStock Int
+  change        Int // positive = added, negative = removed
+  newStock      Int
+  reason        String
+  invoiceId     Int?
+  invoice       Invoice?          @relation(fields: [invoiceId], references: [id])
+  createdAt     DateTime          @default(now())
+
+  // Guarantees an invoice can deduct a given product's stock only ONCE.
+  // (PostgreSQL treats NULL invoiceIds as distinct, so manual adjustments are unaffected.)
+  @@unique([invoiceId, productId])
+  @@index([productId, createdAt])
+}
+
+model BusinessSettings {
+  id                Int      @id @default(1)
+  businessName      String   @default("My Shop")
+  businessAddress   String   @default("")
+  businessPhone     String   @default("")
+  currency          String   @default("INR")
+  invoiceFooter     String   @default("Thank you for your business!")
+  invoicePrefix     String   @default("INV")
+  // Next invoice serial; incremented atomically inside the invoice transaction.
+  nextInvoiceNumber Int      @default(1)
+  updatedAt         DateTime @updatedAt
+}
+
+model WhatsAppMessage {
+  id                Int            @id @default(autoincrement())
+  invoiceId         Int
+  invoice           Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  phone             String
+  mode              WhatsAppMode
+  status            WhatsAppStatus
+  providerMessageId String?        @unique
+  error             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([invoiceId])
+}

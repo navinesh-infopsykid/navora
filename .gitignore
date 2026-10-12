@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Builds and caches
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+.cache/
+
+# Secrets (never commit real credentials)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+
+/generated/prisma

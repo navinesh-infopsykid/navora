@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/* Design tokens. Inspired by the red cloth-bound khata (account ledger) used in Indian shops. */
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-paper: #f5f6f3; /* page background */
+  --color-sheet: #ffffff; /* panels, tables */
+  --color-ink: #1d2633; /* text: blue-black ink */
+  --color-ink-soft: #566173; /* secondary text */
+  --color-ink-faint: #8a93a1; /* hints, placeholders */
+  --color-rule: #d9ddd8; /* borders and dividers */
+  --color-rule-soft: #e9ebe7;
+  --color-khata: #a8322a; /* primary action + brand */
+  --color-khata-dark: #8a2620;
+  --color-khata-tint: #f6e8e6;
+  --color-paid: #14745a;
+  --color-paid-tint: #e3f1ec;
+  --color-due: #a86414;
+  --color-due-tint: #f8eddc;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-paper text-ink font-sans;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  /* Every amount and quantity lines up in columns. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-khata);
+    outline-offset: 2px;
+  }
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .field {
+    @apply w-full rounded-md border border-rule bg-sheet px-3 py-2 text-ink placeholder:text-ink-faint;
+    @apply focus:border-ink focus:outline-none;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-ink-soft;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-semibold whitespace-nowrap;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-khata text-white hover:bg-khata-dark;
+  }
+  .btn-secondary {
+    @apply border border-rule bg-sheet text-ink hover:border-ink;
+  }
+  .btn-ghost {
+    @apply text-ink-soft hover:bg-rule-soft hover:text-ink;
+  }
+  .panel {
+    @apply rounded-lg border border-rule bg-sheet;
+  }
+  .table-head {
+    @apply border-b border-rule text-left text-sm font-medium text-ink-soft;
+  }
+}
+
+/* The bill slip on the billing screen: a perforated top edge like a printed receipt. */
+.bill-slip {
+  position: relative;
+  background: var(--color-sheet);
+  border: 1px solid var(--color-rule);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+}
+.bill-slip::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: -8px;
+  height: 8px;
+  background:
+    radial-gradient(circle at 6px 0, transparent 5px, var(--color-sheet) 5.5px) 0 0 / 12px 8px repeat-x;
+}
