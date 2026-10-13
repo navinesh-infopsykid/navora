@@ -1,0 +1,11 @@
+# Keep secrets and local builds out of the container image.
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+.git
+*.log
+*.zip
+cloudrun.env.yaml
+*backup*.sql

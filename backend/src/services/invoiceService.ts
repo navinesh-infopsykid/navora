@@ -4,7 +4,7 @@ import { config } from "../config";
 import { getDateRange, type RangePreset } from "../lib/dates";
 import { prisma } from "../lib/db";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { calculateTotals, type DiscountType } from "../lib/money";
+import { calculateTotals, validatePaymentParts, type DiscountType } from "../lib/money";
 import { normalizePhone } from "../lib/phone";
 import { SETTINGS_ID } from "./settingsService";
 
@@ -15,9 +15,26 @@ export interface CreateInvoiceInput {
   discountType: DiscountType;
   /** FIXED: paise. PERCENT: basis points (1% = 100). NONE: 0. */
   discountValue: number;
+  /** Used when the bill is paid with one method. Ignored when `payments` is given. */
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  /** Split payment, e.g. [{CASH, 30000}, {UPI, 20000}]. Must add up to the total. PAID bills only. */
+  payments?: { method: PaymentMethod; amountPaise: number }[] | null;
   notes?: string | null;
+}
+
+/**
+ * Decide the payment rows for a PAID bill and the method shown on the invoice.
+ * One method -> that method. Several -> "SPLIT" (the rows hold the breakdown).
+ */
+function planPayments(totalPaise: number, method: PaymentMethod, parts?: { method: PaymentMethod; amountPaise: number }[] | null) {
+  if (parts && parts.length > 0) {
+    if (totalPaise === 0) throw badRequest("This bill is free (₹0), so there is nothing to split");
+    const clean = validatePaymentParts(parts, totalPaise);
+    return { invoiceMethod: (clean.length === 1 ? clean[0].method : "SPLIT") as PaymentMethod, rows: clean };
+  }
+  if (method === "SPLIT") throw badRequest("Enter the amount for each payment method");
+  return { invoiceMethod: method, rows: [{ method, amountPaise: totalPaise }] };
 }
 
 export const invoiceDetailInclude = {
@@ -37,6 +54,17 @@ function mergeItems(items: CreateInvoiceInput["items"]) {
   return [...merged.entries()].sort((a, b) => a[0] - b[0]).map(([productId, quantity]) => ({ productId, quantity }));
 }
 
+/** Product columns needed for billing, read with a row lock (see createInvoice step 1). */
+interface LockedProduct {
+  id: number;
+  name: string;
+  sku: string | null;
+  pricePaise: number;
+  stock: number;
+  isActive: boolean;
+  discountAllowed: boolean;
+}
+
 /**
  * Finalise a bill. Everything below happens in ONE database transaction:
  * customer, invoice, invoice items (with price snapshots), stock deduction,
@@ -44,6 +72,9 @@ function mergeItems(items: CreateInvoiceInput["items"]) {
  *
  * Stock is deducted here exactly once — for paid AND unpaid invoices.
  * Marking an invoice paid later (markInvoicePaid) never touches stock.
+ *
+ * Speed: every database call is a network round trip (Supabase is far away),
+ * so this function uses a fixed number of queries however many items the bill has.
  */
 export async function createInvoice(input: CreateInvoiceInput) {
   const items = mergeItems(input.items);
@@ -51,52 +82,53 @@ export async function createInvoice(input: CreateInvoiceInput) {
 
   const customerPhone = normalizePhone(input.customerPhone, config.defaultCountryCode);
   const customerName = input.customerName?.trim() || "Walk-in Customer";
+  const ids = items.map((i) => i.productId);
 
-  const invoiceId = await prisma.$transaction(
+  return prisma.$transaction(
     async (tx) => {
-      // 1. Load current product details (prices come from the database, never from the browser).
-      const products = await tx.product.findMany({ where: { id: { in: items.map((i) => i.productId) } } });
+      // 1. Load the products AND lock their rows until this bill is saved ("FOR UPDATE").
+      //    Two counters billing the same item at the same moment simply wait for each other,
+      //    so the stock numbers we read here are exact. Rows are locked in id order to avoid deadlocks.
+      const products = await tx.$queryRaw<LockedProduct[]>`
+        SELECT "id", "name", "sku", "pricePaise", "stock", "isActive", "discountAllowed"
+        FROM "Product"
+        WHERE "id" IN (${Prisma.join(ids)})
+        ORDER BY "id"
+        FOR UPDATE`;
       const byId = new Map(products.map((p) => [p.id, p]));
       for (const item of items) {
         const product = byId.get(item.productId);
         if (!product) throw badRequest(`Product #${item.productId} does not exist`);
         if (!product.isActive) throw badRequest(`"${product.name}" is deactivated and cannot be billed`);
+        if (product.stock < item.quantity) {
+          throw badRequest(`Not enough stock for "${product.name}". Available: ${product.stock}, requested: ${item.quantity}.`, {
+            productId: product.id,
+            available: product.stock,
+            requested: item.quantity,
+          });
+        }
       }
 
-      // 2. Calculate money on the server (validates discount).
+      // 2. Calculate money on the server (prices come from the database, never from the browser).
       const lines = items.map((item) => ({ ...item, product: byId.get(item.productId)! }));
       const totals = calculateTotals(
-        lines.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity })),
+        lines.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity, discountAllowed: l.product.discountAllowed })),
         input.discountType,
         input.discountValue,
       );
+      const isPaid = input.paymentStatus === "PAID";
+      if (!isPaid && input.payments?.length) throw badRequest("An unpaid bill can't have payments. Choose Paid, or remove the payments.");
+      const plan = isPaid ? planPayments(totals.totalPaise, input.paymentMethod, input.payments) : null;
+      if (!isPaid && input.paymentMethod === "SPLIT") throw badRequest("Choose one payment method for an unpaid bill");
 
-      // 3. Deduct stock. The conditional update fails safely if stock is too low,
-      //    even when two bills are being saved at the same moment.
-      const movements: Prisma.StockMovementCreateManyInput[] = [];
-      for (const line of lines) {
-        const result = await tx.product.updateMany({
-          where: { id: line.productId, stock: { gte: line.quantity } },
-          data: { stock: { decrement: line.quantity } },
-        });
-        if (result.count === 0) {
-          const current = await tx.product.findUnique({ where: { id: line.productId }, select: { stock: true } });
-          throw badRequest(`Not enough stock for "${line.product.name}". Available: ${current?.stock ?? 0}, requested: ${line.quantity}.`, {
-            productId: line.productId,
-            available: current?.stock ?? 0,
-            requested: line.quantity,
-          });
-        }
-        const after = await tx.product.findUniqueOrThrow({ where: { id: line.productId }, select: { stock: true } });
-        movements.push({
-          productId: line.productId,
-          type: "SALE",
-          previousStock: after.stock + line.quantity,
-          change: -line.quantity,
-          newStock: after.stock,
-          reason: "Sale", // invoice number is filled in below
-        });
-      }
+      // 3. Deduct stock for every line in ONE statement. "stock >= qty" is a final safety net.
+      const values = Prisma.join(lines.map((l) => Prisma.sql`(${l.productId}::int, ${l.quantity}::int)`));
+      const deducted = await tx.$executeRaw`
+        UPDATE "Product" AS p
+        SET "stock" = p."stock" - v.qty, "updatedAt" = NOW()
+        FROM (VALUES ${values}) AS v(id, qty)
+        WHERE p."id" = v.id AND p."stock" >= v.qty`;
+      if (deducted !== lines.length) throw conflict("Stock changed while saving. Please try again.");
 
       // 4. Customer: reuse the same customer when the phone number matches.
       const customer = customerPhone
@@ -112,9 +144,8 @@ export async function createInvoice(input: CreateInvoiceInput) {
       const serial = settings.nextInvoiceNumber - 1;
       const invoiceNumber = `${settings.invoicePrefix}-${String(serial).padStart(5, "0")}`;
 
-      // 6. Invoice + items (names and prices are copied so old invoices never change).
+      // 6. Invoice, then its items (names and prices are copied so old invoices never change).
       const now = new Date();
-      const isPaid = input.paymentStatus === "PAID";
       const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
@@ -128,60 +159,88 @@ export async function createInvoice(input: CreateInvoiceInput) {
           discountPaise: totals.discountPaise,
           totalPaise: totals.totalPaise,
           paymentStatus: input.paymentStatus,
-          paymentMethod: input.paymentMethod,
+          paymentMethod: plan?.invoiceMethod ?? input.paymentMethod,
           paidAt: isPaid ? now : null,
           notes: input.notes?.trim() || null,
-          items: {
-            create: lines.map((line, index) => ({
-              productId: line.productId,
-              productName: line.product.name,
-              sku: line.product.sku,
-              unitPricePaise: line.product.pricePaise,
-              quantity: line.quantity,
-              lineTotalPaise: totals.lineTotals[index],
-            })),
-          },
         },
+      });
+      const invoiceItems = await tx.invoiceItem.createManyAndReturn({
+        data: lines.map((line, index) => ({
+          invoiceId: invoice.id,
+          productId: line.productId,
+          productName: line.product.name,
+          sku: line.product.sku,
+          unitPricePaise: line.product.pricePaise,
+          quantity: line.quantity,
+          lineTotalPaise: totals.lineTotals[index],
+          discountAllowed: line.product.discountAllowed,
+        })),
       });
 
       // 7. Stock history rows. The unique (invoiceId, productId) index guarantees one deduction per product per invoice.
       await tx.stockMovement.createMany({
-        data: movements.map((m) => ({ ...m, invoiceId: invoice.id, reason: `Sale ${invoiceNumber}` })),
+        data: lines.map((line) => ({
+          productId: line.productId,
+          invoiceId: invoice.id,
+          type: "SALE" as const,
+          previousStock: line.product.stock,
+          change: -line.quantity,
+          newStock: line.product.stock - line.quantity,
+          reason: `Sale ${invoiceNumber}`,
+        })),
       });
 
-      // 8. Payment record for bills paid at the counter.
-      if (isPaid) {
-        await tx.payment.create({ data: { invoiceId: invoice.id, amountPaise: totals.totalPaise, method: input.paymentMethod, paidAt: now } });
-      }
+      // 8. Payment records for bills paid at the counter (one row per method for split payments).
+      const payments = plan
+        ? await tx.payment.createManyAndReturn({
+            data: plan.rows.map((row) => ({ invoiceId: invoice.id, amountPaise: row.amountPaise, method: row.method, paidAt: now })),
+          })
+        : [];
 
-      return invoice.id;
+      // Same shape as getInvoice(), built from what we just saved (no extra database reads).
+      return {
+        ...invoice,
+        items: invoiceItems.sort((a, b) => a.id - b.id),
+        payments,
+        whatsAppMessages: [],
+      };
     },
     // Generous limits for a remote (Supabase) database.
     { maxWait: 10_000, timeout: 20_000 },
   );
-  // Load the full invoice after the transaction has committed.
-  return getInvoice(invoiceId);
 }
 
 /**
- * Mark an unpaid invoice as paid. Records a payment. NEVER changes stock.
- * The conditional update (only if still UNPAID) makes double-clicks harmless.
+ * Mark an unpaid invoice as paid. Records the payment(s). NEVER changes stock.
+ * Pass one `paymentMethod`, or `payments` to split it (must add up to the total).
+ * The update only matches an UNPAID invoice, so double-clicks are harmless.
  */
-export async function markInvoicePaid(id: number, paymentMethod?: PaymentMethod) {
-  await prisma.$transaction(async (tx) => {
-    const invoice = await tx.invoice.findUnique({ where: { id } });
-    if (!invoice) throw notFound("Invoice not found");
-
-    const now = new Date();
-    const method = paymentMethod ?? invoice.paymentMethod;
-    const result = await tx.invoice.updateMany({
-      where: { id, paymentStatus: "UNPAID" },
-      data: { paymentStatus: "PAID", paymentMethod: method, paidAt: now },
+export async function markInvoicePaid(id: number, paymentMethod?: PaymentMethod, parts?: { method: PaymentMethod; amountPaise: number }[] | null) {
+  try {
+    await prisma.$transaction(async (tx) => {
+      const now = new Date();
+      // Lock the row and check it is still unpaid.
+      const invoice = await tx.invoice.update({
+        where: { id, paymentStatus: "UNPAID" },
+        data: { paymentStatus: "PAID", paidAt: now },
+      });
+      const plan = planPayments(invoice.totalPaise, paymentMethod ?? (parts?.length ? "SPLIT" : invoice.paymentMethod), parts);
+      if (plan.invoiceMethod !== invoice.paymentMethod) {
+        await tx.invoice.update({ where: { id }, data: { paymentMethod: plan.invoiceMethod } });
+      }
+      await tx.payment.createMany({
+        data: plan.rows.map((row) => ({ invoiceId: id, amountPaise: row.amountPaise, method: row.method, paidAt: now })),
+      });
     });
-    if (result.count === 0) throw conflict(`Invoice ${invoice.invoiceNumber} is already paid`);
-
-    await tx.payment.create({ data: { invoiceId: id, amountPaise: invoice.totalPaise, method, paidAt: now } });
-  });
+  } catch (error) {
+    // No UNPAID invoice with this id: either it does not exist or it is already paid.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      const existing = await prisma.invoice.findUnique({ where: { id }, select: { invoiceNumber: true } });
+      if (!existing) throw notFound("Invoice not found");
+      throw conflict(`Invoice ${existing.invoiceNumber} is already paid`);
+    }
+    throw error;
+  }
   return getInvoice(id);
 }
 

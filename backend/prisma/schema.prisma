@@ -35,6 +35,7 @@ enum PaymentMethod {
   UPI
   CARD
   OTHER
+  SPLIT // invoice paid with more than one method; see its Payment rows
 }
 
 enum StockMovementType {
@@ -63,6 +64,8 @@ model Product {
   pricePaise        Int
   stock             Int      @default(0)
   lowStockThreshold Int      @default(5)
+  // false = the bill-level discount never applies to this item.
+  discountAllowed   Boolean  @default(true)
   description       String?
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
@@ -128,6 +131,8 @@ model InvoiceItem {
   unitPricePaise Int
   quantity       Int
   lineTotalPaise Int
+  // Snapshot: was this line eligible for the bill discount when billed?
+  discountAllowed Boolean @default(true)
 
   @@unique([invoiceId, productId])
 }
@@ -187,4 +192,55 @@ model WhatsAppMessage {
   updatedAt         DateTime       @updatedAt
 
   @@index([invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+model User {
+  id           Int       @id @default(autoincrement())
+  name         String
+  // Login with either email or phone (at least one is required by the API).
+  email        String?   @unique // stored lowercase
+  phone        String?   @unique // digits with country code, e.g. "918270570052"
+  // scrypt hash; the plain password is never stored.
+  passwordHash String
+  // The first account created. Only the owner can add or deactivate users.
+  isOwner      Boolean   @default(false)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sessions     Session[]
+}
+
+model Session {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 of the random token kept in the browser cookie (the token itself is never stored).
+  tokenHash  String   @unique
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([userId])
+}
+
+// A bill parked at the counter ("Hold") to be finished later ("Recall").
+// At most 5 at a time. Stock is NOT reserved: it is only deducted when the bill is saved.
+model HeldCart {
+  id            Int          @id @default(autoincrement())
+  customerName  String?
+  customerPhone String?
+  discountType  DiscountType @default(NONE)
+  // FIXED: paise. PERCENT: basis points. Same meaning as Invoice.discountValue.
+  discountValue Int          @default(0)
+  // [{ "productId": 3, "quantity": 2 }, ...]
+  items         Json
+  createdByName String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }

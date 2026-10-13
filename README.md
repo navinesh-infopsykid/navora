@@ -8,10 +8,13 @@ download invoice PDFs and share them on WhatsApp.
 - **Database:** PostgreSQL on Supabase (free tier), Prisma ORM
 - **PDF:** PDFKit
 
-> **⚠ Security: there is no login in this version.** Anyone who can reach the backend can read and
-> change your data. The backend only listens on `127.0.0.1` (your own computer) by default.
-> Do **not** deploy it to the internet, port-forward it, or share it through a tunnel until you add
-> access control (login, VPN, or a reverse proxy with authentication).
+> **Security:** everyone must log in with an email or mobile number and a password (see
+> [Logins and users](#logins-and-users)). The backend still listens only on `127.0.0.1` (your own
+> computer) by default. Before putting it on the internet, serve it over HTTPS and set
+> `COOKIE_SECURE="true"`.
+
+> **Going online / making it faster:** see [`DEPLOY.md`](DEPLOY.md). It covers moving the database
+> to Mumbai and deploying for free on Google Cloud Run.
 
 ---
 
@@ -22,12 +25,13 @@ download invoice PDFs and share them on WhatsApp.
 3. [Run it on macOS (step by step)](#run-it-on-macos-step-by-step)
 4. [Everyday commands](#everyday-commands)
 5. [Running the tests](#running-the-tests)
-6. [How billing, stock and money work](#how-billing-stock-and-money-work)
-7. [WhatsApp sharing](#whatsapp-sharing)
-8. [REST API reference](#rest-api-reference)
-9. [Viewing and editing data in Supabase](#viewing-and-editing-data-in-supabase)
-10. [Troubleshooting](#troubleshooting)
-11. [Not included yet](#not-included-yet)
+6. [Logins and users](#logins-and-users)
+7. [How billing, stock and money work](#how-billing-stock-and-money-work)
+8. [WhatsApp sharing](#whatsapp-sharing)
+9. [REST API reference](#rest-api-reference)
+10. [Viewing and editing data in Supabase](#viewing-and-editing-data-in-supabase)
+11. [Troubleshooting](#troubleshooting)
+12. [Not included yet](#not-included-yet)
 
 ---
 
@@ -35,10 +39,10 @@ download invoice PDFs and share them on WhatsApp.
 
 | Page | What you can do |
 | --- | --- |
-| **New bill** | Customer name and WhatsApp number, search items (press `/`, type, Enter), several items per bill, edit quantities, remove lines, ₹ or % discount, live subtotal and payable amount, payment method (Cash, UPI, Card, Other), Paid or Unpaid. |
-| **Dashboard** | Today's sales, this month's sales, invoice counts, paid and unpaid totals, low-stock items, recent invoices. |
-| **Invoices** | Filter by today, yesterday, this week, this month or a custom date range; search by invoice number, customer name or phone; filter by Paid/Unpaid; view details; download PDF; mark unpaid invoices as paid; share on WhatsApp. |
-| **Items** | Add, edit, search, deactivate and reactivate products (name, optional SKU, price in ₹, stock, low-stock alert, optional description). |
+| **New bill** | Customer name and WhatsApp number, search items (press `/`, type, Enter), several items per bill, edit quantities, remove lines, ₹ or % discount (applies only to items that allow a discount), live subtotal and payable amount, payment method (Cash, UPI, Card, Other) or **Split** across several methods (must add up to the total), Paid or Unpaid. **Hold bill** parks the current cart on the server and **Held bills** recalls it later — up to 5 at a time. |
+| **Dashboard** | Choose Today, Yesterday, This week, This month, Pick a day or a Custom range. Shows sales, bill count and average bill, paid and unpaid totals, discounts given, money received by payment method (split payments counted under each method), bills in the period and low-stock items. |
+| **Invoices** | Filter by all, today, yesterday, this week, this month, a single chosen day or a custom date range; search by invoice number, customer name or phone; filter by Paid/Unpaid; view details; download PDF; mark unpaid invoices as paid; share on WhatsApp. |
+| **Items** | Add, edit, search, deactivate and reactivate products (name, optional SKU, price in ₹, stock, low-stock alert, optional description, **Discount allowed** on/off). |
 | **Stock adjustment** | Choose an item, add or remove stock with a reason, confirm, and see the full history (before, change, after, reason, time). |
 | **Settings** | Business name, address, phone, currency (default INR) and invoice footer — printed on every PDF. |
 
@@ -169,9 +173,12 @@ Next time you only need `cd ~/Projects/simple-billing-software` and `npm run dev
 
 ### 8. First things to do in the app
 
-1. **Settings:** enter your real business name, address, phone and invoice footer.
-2. **Items:** edit or deactivate the sample products and add your own.
-3. **New bill:** make a test bill and download its PDF.
+1. **Create the owner account:** the first time you open the app it asks for your name, email and/or
+   mobile number, and a password. This becomes the owner login.
+2. **Settings:** enter your real business name, address, phone and invoice footer.
+3. **Items:** check your items and prices.
+4. **New bill:** make a test bill and download its PDF.
+5. **Settings → Users:** add logins for staff, if needed.
 
 ---
 
@@ -189,9 +196,10 @@ Run these from the project folder.
 | `npm test` | Run the automated tests |
 | `npm run build` | Production build of backend (`backend/dist`) and frontend (`frontend/dist`) |
 | `npm run db:check-drift -w backend` | Compare the live database with `schema.prisma` |
+| `npm run user:reset-password` | Set a new password for any login (if the owner forgets theirs) |
 
-To try the production build locally: `npm run build`, then `npm start` (API) in one terminal and
-`npm run preview -w frontend` in another, and open <http://localhost:4173>.
+To try the production build locally: `npm run build`, then `npm start`, and open
+<http://localhost:4000>. In production the backend serves the web pages and the API from one address.
 
 ---
 
@@ -230,6 +238,30 @@ tests as **skipped**.
 (Alternative: create a second, empty Supabase project for tests and use its Session pooler string.)
 
 ---
+
+## Logins and users
+
+- **First run:** the app shows *Create the owner account*. That first account is the **owner**.
+  After it exists, there is no public sign-up.
+- **Logging in:** use your email **or** mobile number (10 digits is fine) and your password.
+  A login lasts 30 days on that browser (`SESSION_DAYS` in `backend/.env`).
+- **Staff logins:** the owner adds them under **Settings → Users** with a name, email and/or mobile
+  number, and a starting password. Staff can bill, manage items and stock, and view invoices; only the
+  owner can manage users.
+- **Deactivate** a staff login to stop it working immediately (they are logged out everywhere).
+  Their past bills are unaffected.
+- **Change your password:** **Settings → Your account**. This logs out your other devices.
+- **Staff forgot their password:** owner opens **Settings → Users → Set password**.
+- **Owner forgot their password:** on the shop computer, in the project folder, run
+  ```bash
+  npm run user:reset-password
+  ```
+  Enter the email or mobile number, then the new password twice (it is hidden while you type).
+
+How it is protected: passwords are stored only as scrypt hashes; the login is an httpOnly cookie
+(page scripts can't read it) with SameSite protection; only a SHA-256 hash of each session token is
+stored; repeated wrong passwords are slowed down (10 failed tries per 15 minutes); and every API
+route except login, health check and the WhatsApp webhook requires a login.
 
 ## How billing, stock and money work
 
@@ -316,7 +348,7 @@ Setup outline:
 
 **Delivery receipts (webhook) — advanced.** Meta must reach `POST /api/whatsapp/webhook` over public
 HTTPS, with `WHATSAPP_WEBHOOK_VERIFY_TOKEN` and `WHATSAPP_APP_SECRET` set (signatures are verified).
-Because this app has no login, do not expose the whole server: put a reverse proxy in front that
+Even with logins, keep the server private: put a reverse proxy in front that
 forwards **only** `/api/whatsapp/webhook`. Without a webhook, automatic sends stay at "Accepted".
 
 ---
@@ -326,12 +358,24 @@ forwards **only** `/api/whatsapp/webhook`. Without a webhook, automatic sends st
 Base URL: `http://127.0.0.1:4000/api`. All amounts are integers in **paise**. Errors return
 `{ "error": "message" }` with a 4xx/5xx status.
 
+All endpoints except `/health`, `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout` and the
+WhatsApp webhook need a logged-in session cookie (otherwise `401`).
+
 | Method & path | Purpose |
 | --- | --- |
 | `GET /health` | Server and database check |
+| `GET /auth/status` | Is first-run setup needed, who is logged in |
+| `POST /auth/setup` | Create the owner account (only when there are no users) |
+| `POST /auth/login` | `{ login: "email or mobile", password }` |
+| `POST /auth/logout` | End this session |
+| `POST /auth/change-password` | `{ currentPassword, newPassword }` |
+| `GET, POST /auth/users` | List / add users (owner only) |
+| `PATCH /auth/users/:id/status` | `{ isActive }` (owner only) |
+| `POST /auth/users/:id/password` | Set a user's password (owner only) |
+| `GET /customers?search=` | Saved customers for the billing dropdown |
 | `GET /products?search=&includeInactive=true&lowStock=true` | List products |
 | `GET /products/:id` | One product |
-| `POST /products` | Create `{ name, sku?, pricePaise, stock, lowStockThreshold, description? }` |
+| `POST /products` | Create `{ name, sku?, pricePaise, stock, lowStockThreshold, description?, discountAllowed? }` (discountAllowed defaults to true) |
 | `PUT /products/:id` | Update details (not stock) |
 | `PATCH /products/:id/status` | `{ isActive: false }` to deactivate, `true` to reactivate |
 | `GET /stock-adjustments?productId=&type=ADJUSTMENT\|SALE&limit=` | Stock history |
@@ -339,14 +383,18 @@ Base URL: `http://127.0.0.1:4000/api`. All amounts are integers in **paise**. Er
 | `GET /invoices?range=all\|today\|yesterday\|week\|month\|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&q=&status=PAID\|UNPAID&page=&pageSize=` | List, filter and search |
 | `GET /invoices/:id` | Invoice with items, payments and WhatsApp history |
 | `POST /invoices` | Finalise a bill (see below) |
-| `POST /invoices/:id/mark-paid` | `{ paymentMethod?: "UPI" }` |
+| `POST /invoices/:id/mark-paid` | `{ paymentMethod?: "UPI" }` or a split `{ payments: [{ method: "CASH", amountPaise: 30000 }, { method: "UPI", amountPaise: 20000 }] }` |
+| `GET /held-carts` | Held bills (max 5) with item names and an estimated total |
+| `POST /held-carts` | Hold a cart `{ customerName?, customerPhone?, discountType, discountValue, items: [{ productId, quantity }] }` (409 when 5 are already held) |
+| `POST /held-carts/:id/recall` | Returns the held cart and removes it from the list |
+| `DELETE /held-carts/:id` | Discard a held cart |
 | `GET /invoices/:id/pdf` | Download PDF (`?inline=1` to view in browser) |
 | `POST /invoices/:id/whatsapp/link` | Manual share: returns `{ url, message }` |
 | `POST /invoices/:id/whatsapp/send` | Automatic send via Cloud API (202 accepted / 502 failed / 503 not configured) |
 | `GET /invoices/:id/whatsapp` | WhatsApp history for an invoice |
 | `GET /whatsapp/status` | Is automatic sending available? |
 | `GET, POST /whatsapp/webhook` | Meta webhook (verification + delivery statuses) |
-| `GET /dashboard` | Dashboard figures |
+| `GET /dashboard?range=today\|yesterday\|week\|month\|all\|custom&from=&to=` | Dashboard figures for a period (default today) |
 | `GET /settings`, `PUT /settings` | Business settings |
 
 Example bill:
@@ -365,7 +413,10 @@ POST /api/invoices
 ```
 
 `discountType` is `NONE`, `FIXED` (value in paise, `5000` = ₹50) or `PERCENT` (value in basis points,
-`1000` = 10%). Phone numbers are stored with the country code (`919876543210`); 10-digit numbers get
+`1000` = 10%). The discount is worked out only on items whose product has `discountAllowed: true`;
+a fixed discount can't be more than those items' total. For a split payment send `"paymentMethod": "SPLIT"`
+with `"payments": [{ "method": "CASH", "amountPaise": 30000 }, { "method": "UPI", "amountPaise": 29010 }]`;
+the amounts must add up exactly to the bill total. Phone numbers are stored with the country code (`919876543210`); 10-digit numbers get
 `DEFAULT_COUNTRY_CODE` (91) added.
 
 ---
@@ -448,6 +499,20 @@ Set `TEST_DATABASE_URL` in `backend/.env` and run `npm run test:db:setup -w back
 running migrations (not by the running app). It cannot be fixed without changing Prisma's major
 version and does not affect the app's data or network exposure.
 
+**Everything feels slow (each action takes a second or more)**
+Check where your Supabase project is: the host in `DATABASE_URL` shows the region, for example
+`ap-southeast-2` = Sydney or `ap-south-1` = Mumbai. A far-away database adds a delay to every database
+trip. Move it to Mumbai with the steps in [`DEPLOY.md`](DEPLOY.md).
+
+**The app keeps going back to the login screen**
+Your login expired or was ended (password changed, account deactivated). Log in again. If it happens
+on every page, check that you open the app at <http://localhost:5173> (the login cookie belongs to that
+address) and that your browser isn't blocking cookies for `localhost`.
+
+**"Too many login attempts"**
+Ten wrong passwords in 15 minutes pauses logins from that computer. Wait 15 minutes, or reset the
+password with `npm run user:reset-password`.
+
 **Fonts look different**
 The interface loads the Instrument Sans font from Google Fonts and falls back to the system font when
 offline. Everything still works.
@@ -456,5 +521,5 @@ offline. Everything still works.
 
 ## Not included yet
 
-GST and tax calculations, barcode scanning, advanced reports, multi-user access or logins, and
-deployment are intentionally out of scope for this first version.
+GST and tax calculations, barcode scanning, advanced reports, detailed staff permissions, password
+reset by email/SMS, and deployment are not included yet.

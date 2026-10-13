@@ -1,0 +1,13 @@
+# Files NOT uploaded by `gcloud run deploy --source .`
+# Secrets, local builds and database backups must never leave your computer.
+.git
+.gitignore
+**/node_modules/
+**/dist/
+**/.env
+**/.env.*
+!**/.env.example
+cloudrun.env.yaml
+*backup*.sql
+*.zip
+*.log

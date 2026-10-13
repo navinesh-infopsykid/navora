@@ -22,4 +22,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-/generated/prisma
+# Deployment secrets and database backups
+cloudrun.env.yaml
+*backup*.sql

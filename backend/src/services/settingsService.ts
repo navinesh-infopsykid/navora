@@ -7,7 +7,9 @@ export const SETTINGS_ID = 1;
 type Client = Prisma.TransactionClient | typeof prisma;
 
 export async function getSettings(client: Client = prisma) {
-  return client.businessSettings.upsert({ where: { id: SETTINGS_ID }, update: {}, create: { id: SETTINGS_ID } });
+  // A plain read is one database round trip; the row is only created on a brand-new database.
+  const existing = await client.businessSettings.findUnique({ where: { id: SETTINGS_ID } });
+  return existing ?? client.businessSettings.upsert({ where: { id: SETTINGS_ID }, update: {}, create: { id: SETTINGS_ID } });
 }
 
 export interface SettingsInput {

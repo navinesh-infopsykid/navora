@@ -23,5 +23,10 @@ export function parseId(value: unknown): number {
 export const paise = z.number().int("Must be a whole number of paise").min(0, "Cannot be negative").max(1_00_00_000_00, "Amount is too large");
 export const wholeNumber = z.number().int("Must be a whole number").min(0, "Cannot be negative").max(10_000_000, "Number is too large");
 export const optionalText = (max: number) => z.string().trim().max(max).nullish();
-export const paymentMethod = z.enum(["CASH", "UPI", "CARD", "OTHER"]);
+export const paymentMethod = z.enum(["CASH", "UPI", "CARD", "OTHER", "SPLIT"]);
+/** One part of a split payment, e.g. { method: "UPI", amountPaise: 20000 }. */
+export const paymentParts = z
+  .array(z.object({ method: z.enum(["CASH", "UPI", "CARD", "OTHER"]), amountPaise: paise }))
+  .max(4)
+  .nullish();
 export const paymentStatus = z.enum(["PAID", "UNPAID"]);

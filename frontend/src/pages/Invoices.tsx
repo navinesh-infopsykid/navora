@@ -1,24 +1,16 @@
 import { Download, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import PeriodPicker, { periodParams, type Period, type PeriodValue } from "../components/PeriodPicker";
 import { EmptyState, Notice, PageHeader, Spinner, StatusBadge } from "../components/ui";
 import { api, errorMessage, pdfUrl, type InvoiceList } from "../lib/api";
 import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
 import { formatMoney } from "../lib/money";
 
-const RANGES = [
-  ["all", "All"],
-  ["today", "Today"],
-  ["yesterday", "Yesterday"],
-  ["week", "This week"],
-  ["month", "This month"],
-  ["custom", "Custom"],
-] as const;
-
 export default function Invoices() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const range = params.get("range") ?? "all";
+  const range = (params.get("range") as Period) ?? "all";
   const status = params.get("status") ?? "";
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
@@ -49,20 +41,24 @@ export default function Invoices() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
+  const period: PeriodValue = { period: range || "all", from, to };
+  const dates = periodParams(period);
+
   useEffect(() => {
-    if (range === "custom" && (!from || !to)) {
+    if (!dates) {
       setLoading(false);
       return;
     }
     setLoading(true);
     api
-      .get<InvoiceList>("/invoices", { params: { range, status: status || undefined, from: from || undefined, to: to || undefined, q: q || undefined, page, pageSize: 25 } })
+      .get<InvoiceList>("/invoices", { params: { ...dates, status: status || undefined, q: q || undefined, page, pageSize: 25 } })
       .then((r) => {
         setData(r.data);
         setError(null);
       })
       .catch((e) => setError(errorMessage(e)))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, status, from, to, q, page]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -72,19 +68,11 @@ export default function Invoices() {
       <PageHeader title="Invoices" description="Find a bill by number, customer name or phone. Open one to download it, share it or mark it paid." />
 
       <div className="mb-4 space-y-3">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Date range">
-          {RANGES.map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => update({ range: value === "all" ? "" : value, ...(value !== "custom" ? { from: "", to: "" } : {}) })}
-              aria-pressed={range === value}
-              className={`rounded-full border px-3 py-1 text-sm font-medium ${range === value ? "border-ink bg-ink text-white" : "border-rule bg-sheet text-ink-soft hover:border-ink"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <PeriodPicker
+          value={period}
+          onChange={(v) => update({ range: v.period === "all" ? "" : v.period, from: v.from, to: v.to })}
+          options={["all", "today", "yesterday", "week", "month", "day", "custom"]}
+        />
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="relative min-w-60 flex-1">
@@ -96,27 +84,11 @@ export default function Invoices() {
             <option value="PAID">Paid only</option>
             <option value="UNPAID">Unpaid only</option>
           </select>
-          {range === "custom" && (
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <label className="label" htmlFor="from">
-                  From
-                </label>
-                <input id="from" type="date" className="field" value={from} max={to || undefined} onChange={(e) => update({ from: e.target.value })} />
-              </div>
-              <div>
-                <label className="label" htmlFor="to">
-                  To
-                </label>
-                <input id="to" type="date" className="field" value={to} min={from || undefined} onChange={(e) => update({ to: e.target.value })} />
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
       {error && <Notice kind="error">{error}</Notice>}
-      {range === "custom" && (!from || !to) && <Notice kind="info">Pick both dates to see invoices in a custom range.</Notice>}
+      {!dates && <Notice kind="info">Choose the dates to see invoices for this period.</Notice>}
 
       {data && !error && (
         <p className="num mb-3 text-sm text-ink-soft">

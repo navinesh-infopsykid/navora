@@ -6,6 +6,26 @@ export const notFoundHandler: RequestHandler = (req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
 };
 
+const ENV_HINT = "Check DATABASE_URL in backend/.env (use the Supabase Session pooler string, port 5432, with your real password), then restart npm run dev.";
+
+/** Recognises "cannot connect to the database" errors and explains them in plain words. */
+function databaseProblem(err: unknown): string | null {
+  const e = err as { code?: string; message?: string; errorCode?: string } | undefined;
+  const code = e?.code ?? e?.errorCode ?? "";
+  const text = `${code} ${e?.message ?? ""}`;
+  if (code === "P1000" || /AuthenticationFailed|password authentication failed|Tenant or user not found/i.test(text)) {
+    return `The database rejected the username or password. ${ENV_HINT}`;
+  }
+  if (["P1001", "P1002", "P1008", "P1017"].includes(code) || /DatabaseNotReachable|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|Can't reach database/i.test(text)) {
+    return `Cannot connect to the database. If your Supabase project is paused, restore it in the Supabase dashboard. ${ENV_HINT}`;
+  }
+  if (code === "P1003" || /DatabaseDoesNotExist/i.test(text)) return `The database in DATABASE_URL does not exist. ${ENV_HINT}`;
+  if (code === "P2021" || /TableDoesNotExist|does not exist in the current database/i.test(text)) {
+    return "The database tables are missing or out of date. Run: npm run db:migrate";
+  }
+  return null;
+}
+
 /** Turns any thrown error into a JSON response: { error: "message", details?: ... } */
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof HttpError) {
@@ -36,6 +56,13 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
       res.status(404).json({ error: "Record not found" });
       return;
     }
+  }
+
+  const dbMessage = databaseProblem(err);
+  if (dbMessage) {
+    console.error(`[database] ${dbMessage}\n          Details: ${(err as Error)?.message?.split("\n").filter(Boolean).pop() ?? err}`);
+    res.status(503).json({ error: dbMessage });
+    return;
   }
 
   console.error("[error]", err);

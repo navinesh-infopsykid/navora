@@ -1,19 +1,28 @@
-import { CheckCircle2, Minus, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { CheckCircle2, Clock3, Minus, PauseCircle, Plus, Search, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import CustomerFields from "../components/CustomerFields";
+import PaymentInput, { emptyPayment, paymentPayload, type PaymentState } from "../components/PaymentInput";
 import WhatsAppShare from "../components/WhatsAppShare";
 import { Modal, Notice } from "../components/ui";
-import { api, errorMessage, pdfUrl, type DiscountType, type Invoice, type PaymentMethod, type PaymentStatus, type Product } from "../lib/api";
-import { METHOD_LABELS } from "../lib/format";
-import { formatMoney, previewTotals } from "../lib/money";
+import { api, errorMessage, pdfUrl, type DiscountType, type HeldCart, type Invoice, type PaymentStatus, type Product } from "../lib/api";
+import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
+import { formatMoney, paiseToText, previewTotals } from "../lib/money";
 
 interface CartLine {
   product: Product;
   quantity: number;
 }
 
-const METHODS: PaymentMethod[] = ["CASH", "UPI", "CARD", "OTHER"];
+const MAX_HELD = 5;
+
+/** "Cash ₹300 + UPI ₹200" for split payments, otherwise the method name. */
+function paidByText(invoice: Invoice) {
+  if (invoice.paymentMethod === "SPLIT" && invoice.payments?.length) {
+    return invoice.payments.map((p) => `${METHOD_LABELS[p.method]} ${formatMoney(p.amountPaise)}`).join(" + ");
+  }
+  return METHOD_LABELS[invoice.paymentMethod];
+}
 
 export default function Billing() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -25,11 +34,15 @@ export default function Billing() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [discountType, setDiscountType] = useState<DiscountType>("NONE");
   const [discountText, setDiscountText] = useState("");
-  const [method, setMethod] = useState<PaymentMethod>("CASH");
+  const [payment, setPayment] = useState<PaymentState>(emptyPayment());
   const [status, setStatus] = useState<PaymentStatus>("PAID");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Invoice | null>(null);
+  const [held, setHeld] = useState<HeldCart[]>([]);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [holdBusy, setHoldBusy] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   async function loadProducts() {
@@ -37,13 +50,25 @@ export default function Billing() {
       const { data } = await api.get<Product[]>("/products");
       setProducts(data);
       setLoadError(null);
+      return data;
     } catch (error) {
       setLoadError(errorMessage(error));
+      return null;
     }
   }
 
+  const loadHeld = useCallback(async () => {
+    try {
+      const { data } = await api.get<HeldCart[]>("/held-carts");
+      setHeld(data);
+    } catch {
+      /* the held list is optional; billing still works */
+    }
+  }, []);
+
   useEffect(() => {
     void loadProducts();
+    void loadHeld();
     // Press "/" anywhere to jump to product search.
     const onKey = (e: globalThis.KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -54,7 +79,7 @@ export default function Billing() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [loadHeld]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -63,11 +88,21 @@ export default function Billing() {
   }, [products, query]);
 
   const totals = useMemo(
-    () => previewTotals(cart.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity })), discountType, discountText),
+    () =>
+      previewTotals(
+        cart.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity, discountAllowed: l.product.discountAllowed })),
+        discountType,
+        discountText,
+      ),
     [cart, discountType, discountText],
   );
+  const pay = paymentPayload(payment, totals.totalPaise);
+  const splitError = status === "PAID" && payment.method === "SPLIT" ? (totals.totalPaise === 0 ? "This bill is ₹0, so there's nothing to split" : pay.error) : null;
 
   const stockProblems = cart.filter((l) => l.quantity > l.product.stock);
+  const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
+  const hasDiscount = discountText.trim() !== "" && totals.discountValue > 0;
+  const someExcluded = cart.some((l) => !l.product.discountAllowed);
 
   function addProduct(product: Product) {
     setCart((lines) => {
@@ -100,22 +135,123 @@ export default function Billing() {
     }
   }
 
+  function clearBill() {
+    setCart([]);
+    setCustomerName("");
+    setCustomerPhone("");
+    setDiscountType("NONE");
+    setDiscountText("");
+    setPayment(emptyPayment());
+    setStatus("PAID");
+    setSaveError(null);
+    setTimeout(() => searchRef.current?.focus(), 0);
+  }
+
+  /** The current screen as a held-cart request body. */
+  function currentCartBody() {
+    const useDiscount = discountText.trim() !== "" && !totals.error && totals.discountValue > 0;
+    return {
+      customerName: customerName.trim() || null,
+      customerPhone: customerPhone.trim() || null,
+      discountType: useDiscount ? discountType : "NONE",
+      discountValue: useDiscount ? totals.discountValue : 0,
+      items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+    };
+  }
+
+  async function holdBill() {
+    if (cart.length === 0) return;
+    setHoldBusy(true);
+    setNotice(null);
+    try {
+      await api.post("/held-carts", currentCartBody());
+      const who = customerName.trim() || "Walk-in customer";
+      clearBill();
+      setNotice({ kind: "success", text: `Bill for ${who} is on hold. Recall it from "Held bills".` });
+    } catch (error) {
+      setNotice({ kind: "error", text: errorMessage(error) });
+    } finally {
+      setHoldBusy(false);
+      void loadHeld();
+    }
+  }
+
+  /** Bring a held bill back. If something is already on screen, it is held in its place. */
+  async function recall(cartToRecall: HeldCart) {
+    setHoldBusy(true);
+    setNotice(null);
+    const swapping = cart.length > 0;
+    const current = swapping ? currentCartBody() : null;
+    try {
+      const { data } = await api.post<HeldCart>(`/held-carts/${cartToRecall.id}/recall`);
+      if (current) {
+        try {
+          await api.post("/held-carts", current);
+        } catch (error) {
+          // Couldn't park the current bill: put the recalled one back and leave the screen as it was.
+          await api.post("/held-carts", { ...data, items: data.items.map((i) => ({ productId: i.productId, quantity: i.quantity })) }).catch(() => undefined);
+          throw error;
+        }
+      }
+      const fresh = (await loadProducts()) ?? products;
+      const byId = new Map(fresh.map((p) => [p.id, p]));
+      const lines: CartLine[] = [];
+      let missing = 0;
+      for (const item of data.items) {
+        const product = byId.get(item.productId);
+        if (product) lines.push({ product, quantity: item.quantity });
+        else missing++;
+      }
+      setCart(lines);
+      setCustomerName(data.customerName ?? "");
+      setCustomerPhone(data.customerPhone ? formatPhone(data.customerPhone) : "");
+      setDiscountType(data.discountType === "NONE" ? "NONE" : data.discountType);
+      setDiscountText(data.discountType === "NONE" ? "" : paiseToText(data.discountValue));
+      setPayment(emptyPayment());
+      setStatus("PAID");
+      setSaveError(null);
+      setHeldOpen(false);
+      const parts = [`Recalled bill for ${data.customerName || "walk-in customer"}.`];
+      if (swapping) parts.push("The bill you were on is now held.");
+      if (missing) parts.push(`${missing} item${missing === 1 ? " is" : "s are"} no longer available and ${missing === 1 ? "was" : "were"} left out.`);
+      setNotice({ kind: missing ? "info" : "success", text: parts.join(" ") });
+    } catch (error) {
+      setNotice({ kind: "error", text: errorMessage(error) });
+    } finally {
+      setHoldBusy(false);
+      void loadHeld();
+    }
+  }
+
+  async function discardHeld(id: number) {
+    try {
+      await api.delete(`/held-carts/${id}`);
+    } catch (error) {
+      setNotice({ kind: "error", text: errorMessage(error) });
+    } finally {
+      void loadHeld();
+    }
+  }
+
   async function saveBill(e: FormEvent) {
     e.preventDefault();
-    if (cart.length === 0 || totals.error || stockProblems.length > 0) return;
+    if (cart.length === 0 || totals.error || stockProblems.length > 0 || splitError) return;
     setSaving(true);
     setSaveError(null);
     try {
+      const isPaid = status === "PAID";
       const { data } = await api.post<Invoice>("/invoices", {
         customerName: customerName.trim() || null,
         customerPhone: customerPhone.trim() || null,
         items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
         discountType: discountText.trim() === "" ? "NONE" : discountType,
         discountValue: discountText.trim() === "" ? 0 : totals.discountValue,
-        paymentMethod: method,
+        paymentMethod: isPaid ? pay.paymentMethod : payment.method === "SPLIT" ? "CASH" : payment.method,
         paymentStatus: status,
+        payments: isPaid ? pay.payments : null,
       });
       setSaved(data);
+      setNotice(null);
       void loadProducts(); // refresh stock numbers
     } catch (error) {
       setSaveError(errorMessage(error));
@@ -127,31 +263,32 @@ export default function Billing() {
 
   function startNewBill() {
     setSaved(null);
-    setCart([]);
-    setCustomerName("");
-    setCustomerPhone("");
-    setDiscountType("NONE");
-    setDiscountText("");
-    setMethod("CASH");
-    setStatus("PAID");
-    setSaveError(null);
-    setTimeout(() => searchRef.current?.focus(), 0);
+    clearBill();
   }
 
-  const canSave = cart.length > 0 && !totals.error && stockProblems.length === 0 && !saving;
+  const canSave = cart.length > 0 && !totals.error && stockProblems.length === 0 && !splitError && !saving;
 
   return (
-    <form onSubmit={saveBill} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <form onSubmit={saveBill} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
       {/* Left: customer + items */}
       <section className="min-w-0 space-y-5">
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">New bill</h1>
-          <p className="hidden text-sm text-ink-faint sm:block">
-            Press <kbd className="rounded border border-rule bg-sheet px-1.5 text-xs">/</kbd> to search items
-          </p>
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-secondary" onClick={holdBill} disabled={cart.length === 0 || holdBusy || held.length >= MAX_HELD}>
+              <PauseCircle className="size-4" aria-hidden /> Hold bill
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setHeldOpen(true)}>
+              <Clock3 className="size-4" aria-hidden /> Held bills
+              <span className={`num rounded-full px-1.5 text-xs ${held.length ? "bg-khata text-white" : "bg-rule-soft text-ink-soft"}`}>
+                {held.length}/{MAX_HELD}
+              </span>
+            </button>
+          </div>
         </div>
 
         {loadError && <Notice kind="error">{loadError}</Notice>}
+        {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
         <CustomerFields
           name={customerName}
@@ -162,9 +299,14 @@ export default function Billing() {
         />
 
         <div className="relative">
-          <label className="label" htmlFor="productSearch">
-            Add item
-          </label>
+          <div className="flex items-baseline justify-between">
+            <label className="label" htmlFor="productSearch">
+              Add item
+            </label>
+            <span className="hidden text-xs text-ink-faint sm:block">
+              Press <kbd className="rounded border border-rule bg-sheet px-1">/</kbd> to search
+            </span>
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-faint" aria-hidden />
             <input
@@ -206,6 +348,7 @@ export default function Billing() {
                         <span className="text-xs text-ink-soft">
                           {p.sku ? `${p.sku}, ` : ""}
                           {out ? "out of stock" : `${p.stock} in stock`}
+                          {!p.discountAllowed && ", no discount"}
                         </span>
                       </span>
                       <span className="num font-medium">{formatMoney(p.pricePaise)}</span>
@@ -237,7 +380,12 @@ export default function Billing() {
                   return (
                     <tr key={line.product.id} className="border-b border-rule-soft last:border-0">
                       <td className="px-4 py-2.5">
-                        <div className="font-medium">{line.product.name}</div>
+                        <div className="font-medium">
+                          {line.product.name}
+                          {!line.product.discountAllowed && (
+                            <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">No discount</span>
+                          )}
+                        </div>
                         <div className={`text-xs ${over ? "font-medium text-khata" : "text-ink-soft"}`}>
                           {over ? `Only ${line.product.stock} in stock` : `${line.product.stock} in stock`}
                         </div>
@@ -286,7 +434,7 @@ export default function Billing() {
           <dl className="num space-y-2 text-sm">
             <div className="flex justify-between">
               <dt className="text-ink-soft">
-                Subtotal ({cart.reduce((n, l) => n + l.quantity, 0)} {cart.reduce((n, l) => n + l.quantity, 0) === 1 ? "item" : "items"})
+                Subtotal ({itemCount} {itemCount === 1 ? "item" : "items"})
               </dt>
               <dd>{formatMoney(totals.subtotalPaise)}</dd>
             </div>
@@ -328,7 +476,16 @@ export default function Billing() {
               aria-label={discountType === "PERCENT" ? "Discount percentage" : "Discount amount in rupees"}
             />
           </div>
-          {totals.error && <p className="mt-1.5 text-sm text-khata">{totals.error}</p>}
+          {totals.error ? (
+            <p className="mt-1.5 text-sm text-khata">{totals.error}</p>
+          ) : (
+            hasDiscount &&
+            someExcluded && (
+              <p className="num mt-1.5 text-xs text-ink-soft">
+                Applies to {formatMoney(totals.discountablePaise)} of items. Items marked "No discount" are excluded.
+              </p>
+            )
+          )}
 
           <div className="mt-5 border-t border-dashed border-rule pt-4">
             <div className="flex items-baseline justify-between">
@@ -338,18 +495,6 @@ export default function Billing() {
           </div>
 
           <fieldset className="mt-5">
-            <legend className="label">Payment method</legend>
-            <div className="grid grid-cols-4 gap-1.5">
-              {METHODS.map((m) => (
-                <label key={m} className={`cursor-pointer rounded-md border py-1.5 text-center text-sm font-medium ${method === m ? "border-ink bg-ink text-white" : "border-rule text-ink-soft hover:border-ink"}`}>
-                  <input type="radio" name="method" value={m} checked={method === m} onChange={() => setMethod(m)} className="sr-only" />
-                  {METHOD_LABELS[m]}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="mt-4">
             <legend className="label">Payment status</legend>
             <div className="grid grid-cols-2 gap-1.5">
               {(["PAID", "UNPAID"] as const).map((s) => (
@@ -366,6 +511,12 @@ export default function Billing() {
             </div>
           </fieldset>
 
+          {status === "PAID" && (
+            <div className="mt-4">
+              <PaymentInput value={payment} onChange={setPayment} totalPaise={totals.totalPaise} />
+            </div>
+          )}
+
           {saveError && (
             <div className="mt-4">
               <Notice kind="error">{saveError}</Notice>
@@ -379,6 +530,47 @@ export default function Billing() {
         </div>
       </aside>
 
+      <Modal open={heldOpen} title={`Held bills (${held.length}/${MAX_HELD})`} onClose={() => setHeldOpen(false)} wide>
+        {held.length === 0 ? (
+          <p className="py-6 text-center text-ink-soft">No bills on hold. Use "Hold bill" to park the current bill and serve the next customer.</p>
+        ) : (
+          <ul className="divide-y divide-rule-soft">
+            {held.map((h) => (
+              <li key={h.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    {h.customerName || "Walk-in customer"}
+                    {h.customerPhone && <span className="num ml-2 text-sm font-normal text-ink-soft">{formatPhone(h.customerPhone)}</span>}
+                  </p>
+                  <p className="num text-sm text-ink-soft">
+                    {h.itemCount} {h.itemCount === 1 ? "item" : "items"}, about {formatMoney(h.estimatePaise)}
+                    {h.discountType !== "NONE" && ` before ${h.discountType === "PERCENT" ? `${paiseToText(h.discountValue)}%` : formatMoney(h.discountValue)} off`}
+                  </p>
+                  <p className="truncate text-xs text-ink-faint">
+                    {h.items.map((i) => `${i.product?.name ?? "Removed item"} × ${i.quantity}`).join(", ")}
+                  </p>
+                  <p className="num text-xs text-ink-faint">
+                    Held {formatDateTime(h.createdAt)}
+                    {h.createdByName ? ` by ${h.createdByName}` : ""}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <button type="button" className="btn btn-ghost px-2.5" onClick={() => void discardHeld(h.id)} disabled={holdBusy}>
+                    Delete
+                  </button>
+                  <button type="button" className="btn btn-primary" onClick={() => void recall(h)} disabled={holdBusy}>
+                    Recall
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {cart.length > 0 && held.length > 0 && (
+          <p className="mt-3 text-xs text-ink-soft">The bill on screen will be held automatically when you recall another one.</p>
+        )}
+      </Modal>
+
       <Modal open={saved !== null} title="Bill saved" onClose={startNewBill}>
         {saved && (
           <div className="space-y-5">
@@ -388,8 +580,8 @@ export default function Billing() {
                 <p className="font-medium">
                   {saved.invoiceNumber} for <span className="num">{formatMoney(saved.totalPaise)}</span>
                 </p>
-                <p className="text-sm text-ink-soft">
-                  {saved.customerName}, {saved.paymentStatus === "PAID" ? `paid by ${METHOD_LABELS[saved.paymentMethod]}` : "marked unpaid"}. Stock has been updated.
+                <p className="num text-sm text-ink-soft">
+                  {saved.customerName}, {saved.paymentStatus === "PAID" ? `paid by ${paidByText(saved)}` : "marked unpaid"}. Stock has been updated.
                 </p>
               </div>
             </div>

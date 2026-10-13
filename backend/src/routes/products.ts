@@ -11,6 +11,7 @@ const productFields = {
   pricePaise: paise,
   lowStockThreshold: wholeNumber,
   description: optionalText(500),
+  discountAllowed: z.boolean().optional(),
 };
 const createSchema = z.object({ ...productFields, stock: wholeNumber });
 const updateSchema = z.object(productFields);

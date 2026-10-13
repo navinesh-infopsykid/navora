@@ -26,6 +26,12 @@ function buildPoolConfig(rawUrl: string): PoolConfig {
     // checking the certificate chain (the same as psql's sslmode=require).
     ssl: sslSetting === "disable" ? false : { rejectUnauthorized: false },
     max: Number(process.env.DATABASE_POOL_SIZE || 5),
+    // Opening a new connection to Supabase takes several network round trips (TLS + login).
+    // Keep idle connections for 5 minutes (the pg default is 10 seconds), so the next bill
+    // reuses one instead of reconnecting.
+    idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 5 * 60_000),
+    keepAlive: true,
+    connectionTimeoutMillis: 15_000,
   };
 }
 

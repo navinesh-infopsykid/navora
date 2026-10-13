@@ -1,5 +1,6 @@
-import { FileText, LayoutDashboard, Package, ReceiptIndianRupee, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
+import { FileText, LayoutDashboard, LogOut, Package, ReceiptIndianRupee, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 import { useSettings } from "../lib/settings";
 
 const links = [
@@ -13,6 +14,7 @@ const links = [
 
 export default function Layout() {
   const { settings } = useSettings();
+  const { user, logout } = useAuth();
   return (
     <div className="min-h-screen md:flex">
       <aside className="border-b border-rule bg-sheet md:sticky md:top-0 md:h-screen md:w-60 md:shrink-0 md:border-r md:border-b-0">
@@ -39,6 +41,15 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="flex items-center justify-between gap-2 border-t border-rule px-4 py-2 md:absolute md:inset-x-0 md:bottom-0 md:px-5 md:py-4">
+          <div className="min-w-0 text-sm">
+            <p className="truncate font-medium">{user?.name}</p>
+            <p className="truncate text-xs text-ink-soft">{user?.isOwner ? "Owner" : "Staff"}</p>
+          </div>
+          <button type="button" className="btn btn-ghost shrink-0 px-2.5" onClick={() => void logout()}>
+            <LogOut className="size-4" aria-hidden /> Log out
+          </button>
+        </div>
       </aside>
       <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
         <div className="mx-auto max-w-6xl">

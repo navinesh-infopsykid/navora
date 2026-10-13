@@ -15,4 +15,4 @@ export function formatPhone(digits: string | null | undefined) {
   return `+${digits}`;
 }
 
-export const METHOD_LABELS = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other" } as const;
+export const METHOD_LABELS = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other", SPLIT: "Split" } as const;

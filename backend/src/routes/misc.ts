@@ -2,7 +2,8 @@ import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db";
 import { parse } from "../lib/validation";
-import { getDashboard } from "../services/dashboardService";
+import { RANGE_PRESETS } from "../lib/dates";
+import { getDashboard, type DashboardQuery } from "../services/dashboardService";
 import { getSettings, publicSettings, updateSettings } from "../services/settingsService";
 import * as whatsapp from "../services/whatsappService";
 
@@ -14,8 +15,18 @@ router.get("/health", async (_req, res) => {
   res.json({ ok: true, database: "connected" });
 });
 
-router.get("/dashboard", async (_req, res) => {
-  res.json(await getDashboard());
+// GET /api/dashboard?range=today|yesterday|week|month|custom|all&from=YYYY-MM-DD&to=YYYY-MM-DD
+// (a single day = custom with from and to the same date)
+router.get("/dashboard", async (req, res) => {
+  const query = parse(
+    z.object({
+      range: z.enum(RANGE_PRESETS as [string, ...string[]]).default("today"),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    }),
+    req.query,
+  );
+  res.json(await getDashboard(query as DashboardQuery));
 });
 
 router.get("/settings", async (_req, res) => {

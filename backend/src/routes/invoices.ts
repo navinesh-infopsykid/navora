@@ -2,7 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { RANGE_PRESETS } from "../lib/dates";
-import { optionalText, parse, parseId, paymentMethod, paymentStatus } from "../lib/validation";
+import { optionalText, parse, parseId, paymentMethod, paymentParts, paymentStatus } from "../lib/validation";
 import * as invoices from "../services/invoiceService";
 import { buildInvoicePdf } from "../services/pdfService";
 import * as whatsapp from "../services/whatsappService";
@@ -21,6 +21,7 @@ const createSchema = z
     discountValue: z.number().int().min(0).default(0),
     paymentMethod,
     paymentStatus,
+    payments: paymentParts,
     notes: optionalText(500),
   })
   .refine((d) => d.discountType !== "PERCENT" || d.discountValue <= 10_000, {
@@ -57,9 +58,10 @@ router.post("/", async (req, res) => {
 });
 
 // POST /api/invoices/:id/mark-paid  { "paymentMethod": "UPI" }
+//   or split: { "payments": [{ "method": "CASH", "amountPaise": 30000 }, { "method": "UPI", "amountPaise": 20000 }] }
 router.post("/:id/mark-paid", async (req, res) => {
-  const body = parse(z.object({ paymentMethod: paymentMethod.optional() }), req.body ?? {});
-  res.json(await invoices.markInvoicePaid(parseId(req.params.id), body.paymentMethod));
+  const body = parse(z.object({ paymentMethod: paymentMethod.optional(), payments: paymentParts }), req.body ?? {});
+  res.json(await invoices.markInvoicePaid(parseId(req.params.id), body.paymentMethod, body.payments));
 });
 
 // GET /api/invoices/:id/pdf  (add ?inline=1 to open in the browser instead of downloading)

@@ -23,6 +23,8 @@ Prisma creates the tables (migrations) and the backend reads and writes them.
 | `StockMovement` | Every stock change: before, change, after, reason, and the invoice for sales. |
 | `BusinessSettings` | One row (id 1): business name, address, phone, currency, footer, invoice counter. |
 | `WhatsAppMessage` | Each WhatsApp share attempt and its status. |
+| `User` | Logins: name, email/phone, password **hash**, owner flag, active flag. |
+| `Session` | Active logins (only a hash of each browser's token). Delete rows here to log everyone out. |
 
 **Money is stored in paise** (whole numbers). ₹49.50 is stored as `4950`.
 
@@ -68,6 +70,8 @@ Things to know before editing by hand:
 - **Do not edit or delete invoices, invoice items or payments.** They are your sales records.
   If a bill was wrong, note it and correct stock with an adjustment.
 - Deactivate products in the app instead of deleting them; deleting a product that appears on an invoice is blocked by the database.
+- Never type a password into the `User` table: `passwordHash` must be a hash. Use
+  `npm run user:reset-password` instead.
 - Do not touch the `_prisma_migrations` table — Prisma uses it to track which migrations ran.
 - `BusinessSettings.nextInvoiceNumber` is the next invoice serial. Change it only to start numbering
   from a higher number (never lower, or invoice numbers will clash).

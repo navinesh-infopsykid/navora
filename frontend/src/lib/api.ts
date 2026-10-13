@@ -6,7 +6,8 @@ import axios from "axios";
 
 export const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
-export const api = axios.create({ baseURL: API_BASE, timeout: 30_000 });
+// withCredentials sends the login cookie (needed when VITE_API_URL points to another port).
+export const api = axios.create({ baseURL: API_BASE, timeout: 30_000, withCredentials: true });
 
 /** Human-readable message from any API error. */
 export function errorMessage(error: unknown): string {
@@ -20,7 +21,9 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong";
 }
 
-export type PaymentMethod = "CASH" | "UPI" | "CARD" | "OTHER";
+export type SingleMethod = "CASH" | "UPI" | "CARD" | "OTHER";
+/** SPLIT = paid with more than one method (see the invoice's payments). */
+export type PaymentMethod = SingleMethod | "SPLIT";
 export type PaymentStatus = "PAID" | "UNPAID";
 export type DiscountType = "NONE" | "FIXED" | "PERCENT";
 
@@ -32,6 +35,8 @@ export interface Product {
   stock: number;
   lowStockThreshold: number;
   description: string | null;
+  /** false = the bill discount never applies to this item. */
+  discountAllowed: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -58,12 +63,13 @@ export interface InvoiceItem {
   unitPricePaise: number;
   quantity: number;
   lineTotalPaise: number;
+  discountAllowed: boolean;
 }
 
 export interface Payment {
   id: number;
   amountPaise: number;
-  method: PaymentMethod;
+  method: SingleMethod;
   paidAt: string;
 }
 
@@ -115,19 +121,34 @@ export interface Settings {
   invoicePrefix: string;
 }
 
-interface PeriodStats {
-  salesPaise: number;
-  paidPaise: number;
-  unpaidPaise: number;
-  invoiceCount: number;
-}
-
 export interface Dashboard {
-  today: PeriodStats;
-  month: PeriodStats;
+  range: { start: string; end: string } | null;
+  sales: {
+    salesPaise: number;
+    paidPaise: number;
+    unpaidPaise: number;
+    invoiceCount: number;
+    discountPaise: number;
+    averageBillPaise: number;
+  };
+  receivedByMethod: { method: SingleMethod; amountPaise: number; count: number }[];
   outstandingUnpaid: { totalPaise: number; count: number };
   lowStockProducts: Product[];
-  recentInvoices: Pick<Invoice, "id" | "invoiceNumber" | "customerName" | "invoiceDate" | "totalPaise" | "paymentStatus">[];
+  recentInvoices: Pick<Invoice, "id" | "invoiceNumber" | "customerName" | "invoiceDate" | "totalPaise" | "paymentStatus" | "paymentMethod">[];
+}
+
+export interface HeldCart {
+  id: number;
+  customerName: string | null;
+  customerPhone: string | null;
+  discountType: DiscountType;
+  /** FIXED: paise. PERCENT: basis points. */
+  discountValue: number;
+  items: { productId: number; quantity: number; product: { id: number; name: string; pricePaise: number; isActive: boolean } | null }[];
+  itemCount: number;
+  estimatePaise: number;
+  createdByName: string | null;
+  createdAt: string;
 }
 
 export interface WhatsAppCloudStatus {
@@ -138,3 +159,20 @@ export interface WhatsAppCloudStatus {
 }
 
 export const pdfUrl = (invoiceId: number) => `${API_BASE}/invoices/${invoiceId}/pdf`;
+
+export interface AuthUser {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  isOwner: boolean;
+  isActive: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface AuthStatus {
+  setupRequired: boolean;
+  user: AuthUser | null;
+  businessName: string | null;
+}

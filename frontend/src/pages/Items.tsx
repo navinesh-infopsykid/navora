@@ -12,9 +12,10 @@ interface FormState {
   stock: string;
   lowStockThreshold: string;
   description: string;
+  discountAllowed: boolean;
 }
 
-const emptyForm: FormState = { name: "", sku: "", price: "", stock: "0", lowStockThreshold: "5", description: "" };
+const emptyForm: FormState = { name: "", sku: "", price: "", stock: "0", lowStockThreshold: "5", description: "", discountAllowed: true };
 
 export default function Items() {
   const [products, setProducts] = useState<Product[] | null>(null);
@@ -56,6 +57,7 @@ export default function Items() {
       stock: String(p.stock),
       lowStockThreshold: String(p.lowStockThreshold),
       description: p.description ?? "",
+      discountAllowed: p.discountAllowed,
     });
     setFormError(null);
     setEditing(p);
@@ -71,7 +73,7 @@ export default function Items() {
     if (editing === "new" && (!Number.isInteger(stock) || stock < 0)) return setFormError("Opening stock must be a whole number, 0 or more.");
     if (!Number.isInteger(low) || low < 0) return setFormError("Low-stock alert must be a whole number, 0 or more.");
 
-    const body = { name: form.name, sku: form.sku || null, pricePaise, lowStockThreshold: low, description: form.description || null };
+    const body = { name: form.name, sku: form.sku || null, pricePaise, lowStockThreshold: low, description: form.description || null, discountAllowed: form.discountAllowed };
     setSaving(true);
     try {
       if (editing === "new") await api.post("/products", { ...body, stock });
@@ -143,6 +145,9 @@ export default function Items() {
                     <td className="px-4 py-3">
                       <div className="font-medium">
                         {p.name} {!p.isActive && <span className="ml-1 text-xs font-normal">(deactivated)</span>}
+                        {!p.discountAllowed && (
+                          <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">No discount</span>
+                        )}
                       </div>
                       <div className="text-xs text-ink-soft">{[p.sku, p.description].filter(Boolean).join(", ")}</div>
                     </td>
@@ -221,6 +226,20 @@ export default function Items() {
               <input id="low" className="field num" inputMode="numeric" value={form.lowStockThreshold} onChange={(e) => setForm({ ...form, lowStockThreshold: e.target.value })} />
             </div>
           </div>
+          <label className="flex items-start gap-3 rounded-md border border-rule p-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 accent-khata"
+              checked={form.discountAllowed}
+              onChange={(e) => setForm({ ...form, discountAllowed: e.target.checked })}
+            />
+            <span>
+              <span className="block text-sm font-medium">Discount allowed</span>
+              <span className="block text-xs text-ink-soft">
+                When off, bill discounts (₹ or %) never apply to this item, for example fixed-price items or offers.
+              </span>
+            </span>
+          </label>
           <div>
             <label className="label" htmlFor="description">
               Description (optional)

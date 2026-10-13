@@ -8,6 +8,8 @@ export interface ProductInput {
   pricePaise: number;
   lowStockThreshold: number;
   description?: string | null;
+  /** false = bill discounts never apply to this item. Defaults to true. */
+  discountAllowed?: boolean;
 }
 
 export interface CreateProductInput extends ProductInput {
@@ -50,6 +52,7 @@ export async function createProduct(input: CreateProductInput) {
         stock: input.stock,
         lowStockThreshold: input.lowStockThreshold,
         description: clean(input.description),
+        discountAllowed: input.discountAllowed ?? true,
       },
     });
     if (input.stock > 0) {
@@ -79,6 +82,7 @@ export async function updateProduct(id: number, input: ProductInput) {
       pricePaise: input.pricePaise,
       lowStockThreshold: input.lowStockThreshold,
       description: clean(input.description),
+      ...(input.discountAllowed === undefined ? {} : { discountAllowed: input.discountAllowed }),
     },
   });
 }

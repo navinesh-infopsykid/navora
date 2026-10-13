@@ -1,10 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Notice, PageHeader, Spinner } from "../components/ui";
 import { api, errorMessage, type Settings as SettingsData } from "../lib/api";
+import { ChangePassword, ManageUsers } from "../components/AccountSettings";
+import { useAuth } from "../lib/auth";
 import { useSettings } from "../lib/settings";
 
 export default function Settings() {
   const { reload } = useSettings();
+  const { user } = useAuth();
   const [form, setForm] = useState<SettingsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -95,6 +98,10 @@ export default function Settings() {
           </div>
         </form>
       )}
+      <div className="mt-8 space-y-6">
+        <ChangePassword />
+        {user?.isOwner && <ManageUsers />}
+      </div>
     </>
   );
 }

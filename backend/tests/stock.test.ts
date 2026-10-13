@@ -1,9 +1,7 @@
-import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createApp } from "../src/app";
 import { createProduct } from "../src/services/productService";
 import { adjustStock } from "../src/services/stockService";
-import { hasTestDb, makeProduct, prisma, resetDatabase } from "./helpers";
+import { hasTestDb, makeProduct, prisma, resetDatabase, loggedInAgent } from "./helpers";
 
 describe.skipIf(!hasTestDb)("stock adjustments (database)", () => {
   beforeEach(resetDatabase);
@@ -34,13 +32,13 @@ describe.skipIf(!hasTestDb)("stock adjustments (database)", () => {
   });
 
   it("validates input through the REST API", async () => {
-    const app = createApp();
+    const agent = await loggedInAgent();
     const p = await makeProduct({ stock: 3 });
-    expect((await request(app).post("/api/stock-adjustments").send({ productId: p.id, change: 0, reason: "x" })).status).toBe(400);
-    expect((await request(app).post("/api/stock-adjustments").send({ productId: p.id, change: 2, reason: "  " })).status).toBe(400);
-    expect((await request(app).post("/api/stock-adjustments").send({ productId: p.id, change: 1.5, reason: "x" })).status).toBe(400);
-    expect((await request(app).post("/api/stock-adjustments").send({ productId: 999, change: 1, reason: "x" })).status).toBe(404);
-    const ok = await request(app).post("/api/stock-adjustments").send({ productId: p.id, change: -3, reason: "Expired" });
+    expect((await agent.post("/api/stock-adjustments").send({ productId: p.id, change: 0, reason: "x" })).status).toBe(400);
+    expect((await agent.post("/api/stock-adjustments").send({ productId: p.id, change: 2, reason: "  " })).status).toBe(400);
+    expect((await agent.post("/api/stock-adjustments").send({ productId: p.id, change: 1.5, reason: "x" })).status).toBe(400);
+    expect((await agent.post("/api/stock-adjustments").send({ productId: 999, change: 1, reason: "x" })).status).toBe(404);
+    const ok = await agent.post("/api/stock-adjustments").send({ productId: p.id, change: -3, reason: "Expired" });
     expect(ok.status).toBe(201);
     expect(ok.body.product.stock).toBe(0);
   });
@@ -50,10 +48,10 @@ describe.skipIf(!hasTestDb)("product API (database)", () => {
   beforeEach(resetDatabase);
 
   it("returns a friendly 409 for a duplicate SKU", async () => {
-    const app = createApp();
+    const agent = await loggedInAgent();
     const body = { name: "Ghee", sku: "GHEE-1", pricePaise: 32_950, stock: 1, lowStockThreshold: 1 };
-    expect((await request(app).post("/api/products").send(body)).status).toBe(201);
-    const dup = await request(app).post("/api/products").send({ ...body, name: "Other" });
+    expect((await agent.post("/api/products").send(body)).status).toBe(201);
+    const dup = await agent.post("/api/products").send({ ...body, name: "Other" });
     expect(dup.status).toBe(409);
     expect(dup.body.error).toBe("Another product already uses this SKU");
   });

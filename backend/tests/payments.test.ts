@@ -1,8 +1,6 @@
-import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createApp } from "../src/app";
 import { createInvoice, markInvoicePaid } from "../src/services/invoiceService";
-import { hasTestDb, makeProduct, prisma, resetDatabase } from "./helpers";
+import { hasTestDb, makeProduct, prisma, resetDatabase, loggedInAgent } from "./helpers";
 
 describe.skipIf(!hasTestDb)("payment updates (database)", () => {
   beforeEach(resetDatabase);
@@ -46,39 +44,39 @@ describe.skipIf(!hasTestDb)("payment updates (database)", () => {
   });
 
   it("works through the REST API", async () => {
-    const app = createApp();
+    const agent = await loggedInAgent();
     const { invoice } = await unpaidInvoice();
 
-    const first = await request(app).post(`/api/invoices/${invoice.id}/mark-paid`).send({ paymentMethod: "CARD" });
+    const first = await agent.post(`/api/invoices/${invoice.id}/mark-paid`).send({ paymentMethod: "CARD" });
     expect(first.status).toBe(200);
     expect(first.body.paymentStatus).toBe("PAID");
 
-    const second = await request(app).post(`/api/invoices/${invoice.id}/mark-paid`).send({});
+    const second = await agent.post(`/api/invoices/${invoice.id}/mark-paid`).send({});
     expect(second.status).toBe(409);
 
-    const missing = await request(app).post(`/api/invoices/99999/mark-paid`).send({});
+    const missing = await agent.post(`/api/invoices/99999/mark-paid`).send({});
     expect(missing.status).toBe(404);
 
-    const badMethod = await request(app).post(`/api/invoices/${invoice.id}/mark-paid`).send({ paymentMethod: "BITCOIN" });
+    const badMethod = await agent.post(`/api/invoices/${invoice.id}/mark-paid`).send({ paymentMethod: "BITCOIN" });
     expect(badMethod.status).toBe(400);
   });
 
   it("WhatsApp sharing is only offered for paid invoices and never changes the invoice", async () => {
-    const app = createApp();
+    const agent = await loggedInAgent();
     const { invoice } = await unpaidInvoice();
 
-    const blocked = await request(app).post(`/api/invoices/${invoice.id}/whatsapp/link`);
+    const blocked = await agent.post(`/api/invoices/${invoice.id}/whatsapp/link`);
     expect(blocked.status).toBe(409);
 
     await markInvoicePaid(invoice.id);
-    const link = await request(app).post(`/api/invoices/${invoice.id}/whatsapp/link`);
+    const link = await agent.post(`/api/invoices/${invoice.id}/whatsapp/link`);
     expect(link.status).toBe(201);
     expect(link.body.url).toMatch(/^https:\/\/wa\.me\/919876500000\?text=/);
     expect(decodeURIComponent(link.body.url.split("?text=")[1])).toContain(invoice.invoiceNumber);
     expect(link.body.record.status).toBe("LINK_GENERATED");
 
     // Cloud API is not configured in tests -> clear 503, invoice untouched.
-    const send = await request(app).post(`/api/invoices/${invoice.id}/whatsapp/send`);
+    const send = await agent.post(`/api/invoices/${invoice.id}/whatsapp/send`);
     expect(send.status).toBe(503);
     const after = await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
     expect(after.paymentStatus).toBe("PAID");

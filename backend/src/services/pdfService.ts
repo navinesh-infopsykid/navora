@@ -6,7 +6,7 @@ import { displayPhone } from "../lib/phone";
 import { getInvoice } from "./invoiceService";
 import { getSettings } from "./settingsService";
 
-const METHOD_LABEL: Record<string, string> = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other" };
+const METHOD_LABEL: Record<string, string> = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other", SPLIT: "Split" };
 
 function discountLabel(type: string, value: number) {
   if (type === "PERCENT") return `Discount (${(value / 100).toString()}%)`;
@@ -75,7 +75,8 @@ export async function buildInvoicePdf(invoiceId: number): Promise<{ buffer: Buff
     }
     drawRow({
       no: String(index + 1),
-      item: item.sku ? `${item.productName} (${item.sku})` : item.productName,
+      // "*" marks items the bill discount did not apply to (explained under the totals).
+      item: `${item.sku ? `${item.productName} (${item.sku})` : item.productName}${invoice.discountPaise > 0 && !item.discountAllowed ? " *" : ""}`,
       qty: String(item.quantity),
       rate: money(item.unitPricePaise),
       amount: money(item.lineTotalPaise),
@@ -98,7 +99,16 @@ export async function buildInvoicePdf(invoiceId: number): Promise<{ buffer: Buff
 
   y += 10;
   doc.font("Helvetica").fontSize(10).fillColor("#4b5563");
-  doc.text(`Payment: ${METHOD_LABEL[invoice.paymentMethod]} · ${invoice.paymentStatus === "PAID" ? "Paid" : "Unpaid"}`, left, y);
+  if (invoice.discountPaise > 0 && invoice.items.some((i) => !i.discountAllowed)) {
+    doc.fontSize(9).text("* Discount not applicable on this item", left, y);
+    y = doc.y + 6;
+    doc.fontSize(10);
+  }
+  const paymentText =
+    invoice.paymentStatus === "PAID" && invoice.payments.length > 1
+      ? `Payment: ${invoice.payments.map((p) => `${METHOD_LABEL[p.method]} ${money(p.amountPaise)}`).join(" + ")} · Paid`
+      : `Payment: ${METHOD_LABEL[invoice.paymentMethod]} · ${invoice.paymentStatus === "PAID" ? "Paid" : "Unpaid"}`;
+  doc.text(paymentText, left, y, { width });
   if (invoice.paidAt && invoice.paymentStatus === "PAID") doc.text(`Paid on: ${formatDateTime(invoice.paidAt, config.timezone)}`);
   if (invoice.notes) doc.moveDown(0.5).text(`Notes: ${invoice.notes}`, { width });
 

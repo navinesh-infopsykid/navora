@@ -1,11 +1,9 @@
 import crypto from "node:crypto";
-import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp } from "../src/app";
 import { config } from "../src/config";
 import { createInvoice } from "../src/services/invoiceService";
 import { resetWhatsAppStatusCache, sendInvoiceViaCloudApi } from "../src/services/whatsappService";
-import { hasTestDb, makeProduct, prisma, resetDatabase } from "./helpers";
+import { hasTestDb, makeProduct, prisma, resetDatabase, loggedInAgent } from "./helpers";
 
 /** Fake Meta Graph API: answers by URL. Never touches the network. */
 function fakeGraph(options: { failSend?: boolean } = {}) {
@@ -59,21 +57,21 @@ describe.skipIf(!hasTestDb)("WhatsApp Cloud API (mocked, database)", () => {
 
     const payload = JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: "wamid.ABC", status: "delivered" }] } }] }] });
     const signature = "sha256=" + crypto.createHmac("sha256", "app-secret").update(payload).digest("hex");
-    const app = createApp();
-    const res = await request(app).post("/api/whatsapp/webhook").set("content-type", "application/json").set("x-hub-signature-256", signature).send(payload);
+    const agent = await loggedInAgent();
+    const res = await agent.post("/api/whatsapp/webhook").set("content-type", "application/json").set("x-hub-signature-256", signature).send(payload);
     expect(res.status).toBe(200);
     expect((await prisma.whatsAppMessage.findUniqueOrThrow({ where: { id: record.id } })).status).toBe("DELIVERED");
 
-    const unsigned = await request(app).post("/api/whatsapp/webhook").set("content-type", "application/json").send(payload);
+    const unsigned = await agent.post("/api/whatsapp/webhook").set("content-type", "application/json").send(payload);
     expect(unsigned.status).toBe(401);
   });
 
   it("a WhatsApp failure is recorded but the invoice stays saved and unchanged", async () => {
     vi.stubGlobal("fetch", fakeGraph({ failSend: true }));
     const invoice = await paidInvoice();
-    const app = createApp();
+    const agent = await loggedInAgent();
 
-    const res = await request(app).post(`/api/invoices/${invoice.id}/whatsapp/send`);
+    const res = await agent.post(`/api/invoices/${invoice.id}/whatsapp/send`);
     expect(res.status).toBe(502);
     expect(res.body).toMatchObject({ status: "FAILED", error: "Recipient not in allowed list" });
 
@@ -85,7 +83,7 @@ describe.skipIf(!hasTestDb)("WhatsApp Cloud API (mocked, database)", () => {
 
   it("status endpoint never exposes the access token", async () => {
     vi.stubGlobal("fetch", fakeGraph());
-    const res = await request(createApp()).get("/api/whatsapp/status");
+    const res = await (await loggedInAgent()).get("/api/whatsapp/status");
     expect(res.body.enabled).toBe(true);
     expect(JSON.stringify(res.body)).not.toContain("test-token");
   });

@@ -1,9 +1,10 @@
 import { ArrowLeft, Download, FileText } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import PaymentInput, { emptyPayment, paymentPayload, type PaymentState } from "../components/PaymentInput";
 import WhatsAppShare, { WHATSAPP_STATUS_TEXT } from "../components/WhatsAppShare";
 import { Notice, Spinner, StatusBadge } from "../components/ui";
-import { api, errorMessage, pdfUrl, type Invoice, type PaymentMethod } from "../lib/api";
+import { api, errorMessage, pdfUrl, type Invoice } from "../lib/api";
 import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
 import { formatMoney } from "../lib/money";
 
@@ -11,7 +12,7 @@ export default function InvoiceDetail() {
   const { id } = useParams();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [method, setMethod] = useState<PaymentMethod>("CASH");
+  const [payment, setPayment] = useState<PaymentState>(emptyPayment());
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
 
@@ -19,7 +20,7 @@ export default function InvoiceDetail() {
     try {
       const { data } = await api.get<Invoice>(`/invoices/${id}`);
       setInvoice(data);
-      setMethod(data.paymentMethod);
+      setPayment(emptyPayment(data.paymentMethod === "SPLIT" ? "CASH" : data.paymentMethod));
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
@@ -31,10 +32,16 @@ export default function InvoiceDetail() {
   }, [load]);
 
   async function markPaid() {
+    if (!invoice) return;
+    const pay = paymentPayload(payment, invoice.totalPaise);
+    if (pay.error) {
+      setPayError(pay.error);
+      return;
+    }
     setPaying(true);
     setPayError(null);
     try {
-      const { data } = await api.post<Invoice>(`/invoices/${id}/mark-paid`, { paymentMethod: method });
+      const { data } = await api.post<Invoice>(`/invoices/${id}/mark-paid`, pay.payments ? { payments: pay.payments } : { paymentMethod: pay.paymentMethod });
       setInvoice(data);
     } catch (e) {
       setPayError(errorMessage(e));
@@ -95,6 +102,9 @@ export default function InvoiceDetail() {
                   <td className="px-5 py-2.5">
                     {item.productName}
                     {item.sku && <span className="text-ink-soft"> ({item.sku})</span>}
+                    {invoice.discountPaise > 0 && !item.discountAllowed && (
+                      <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">No discount</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right">{formatMoney(item.unitPricePaise)}</td>
                   <td className="px-3 py-2.5 text-right">{item.quantity}</td>
@@ -138,18 +148,7 @@ export default function InvoiceDetail() {
                 <p className="text-sm text-ink-soft">
                   <span className="num font-medium text-due">{formatMoney(invoice.totalPaise)}</span> is still due. Stock was already deducted when the bill was saved; marking it paid does not change stock.
                 </p>
-                <div>
-                  <label className="label" htmlFor="payMethod">
-                    Paid by
-                  </label>
-                  <select id="payMethod" className="field" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-                    {(Object.keys(METHOD_LABELS) as PaymentMethod[]).map((m) => (
-                      <option key={m} value={m}>
-                        {METHOD_LABELS[m]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <PaymentInput value={payment} onChange={setPayment} totalPaise={invoice.totalPaise} />
                 {payError && <Notice kind="error">{payError}</Notice>}
                 <button type="button" className="btn btn-primary w-full" onClick={markPaid} disabled={paying}>
                   {paying ? "Saving…" : "Mark as paid"}

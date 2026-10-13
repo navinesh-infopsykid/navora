@@ -55,11 +55,15 @@ export function formatMoney(paise: number, currency = "INR"): string {
 export interface LineInput {
   unitPricePaise: number;
   quantity: number;
+  /** false = the bill discount does not apply to this line. Default true. */
+  discountAllowed?: boolean;
 }
 
 export interface Totals {
   lineTotals: number[];
   subtotalPaise: number;
+  /** Part of the subtotal the discount applies to (lines that allow a discount). */
+  discountableSubtotalPaise: number;
   discountPaise: number;
   totalPaise: number;
 }
@@ -72,7 +76,10 @@ export interface Totals {
  *  - FIXED:   discount in paise, e.g. 5000 = Rs. 50
  *  - PERCENT: basis points, e.g. 1250 = 12.5%
  *
- * Throws a 400 error for invalid discounts (negative, over 100%, more than the subtotal).
+ * The discount only applies to lines that allow a discount (Product.discountAllowed).
+ * A percentage is taken of those lines; a fixed amount can't exceed their total.
+ *
+ * Throws a 400 error for invalid discounts (negative, over 100%, more than the eligible amount).
  */
 export function calculateTotals(lines: LineInput[], discountType: DiscountType, discountValue: number): Totals {
   if (lines.length === 0) throw badRequest("Add at least one item to the bill");
@@ -89,24 +96,56 @@ export function calculateTotals(lines: LineInput[], discountType: DiscountType, 
 
   const subtotalPaise = lineTotals.reduce((sum, value) => sum + value, 0);
   if (subtotalPaise > MAX_INVOICE_PAISE) throw badRequest("Invoice total is too large");
+  const discountableSubtotalPaise = lineTotals.reduce((sum, value, i) => sum + (lines[i].discountAllowed === false ? 0 : value), 0);
 
   if (!Number.isInteger(discountValue) || discountValue < 0) {
     throw badRequest("Discount must be zero or a positive number");
   }
 
   let discountPaise = 0;
+  if ((discountType === "FIXED" || discountType === "PERCENT") && discountValue > 0 && discountableSubtotalPaise === 0) {
+    throw badRequest("None of the items on this bill allow a discount");
+  }
   if (discountType === "FIXED") {
-    if (discountValue > subtotalPaise) throw badRequest("Discount cannot be more than the subtotal");
+    if (discountValue > discountableSubtotalPaise) {
+      throw badRequest(
+        discountableSubtotalPaise === subtotalPaise
+          ? "Discount cannot be more than the subtotal"
+          : "Discount cannot be more than the total of items that allow a discount",
+      );
+    }
     discountPaise = discountValue;
   } else if (discountType === "PERCENT") {
     if (discountValue > FULL_PERCENT_BP) throw badRequest("Discount percentage cannot be more than 100%");
     // Round to the nearest paisa (half rounds up). Safe: max value is 1e10 * 1e4 < 2^53.
-    discountPaise = Math.round((subtotalPaise * discountValue) / FULL_PERCENT_BP);
+    discountPaise = Math.round((discountableSubtotalPaise * discountValue) / FULL_PERCENT_BP);
   } else if (discountType === "NONE") {
     if (discountValue !== 0) throw badRequest("Discount value must be 0 when there is no discount");
   } else {
     throw badRequest("Unknown discount type");
   }
 
-  return { lineTotals, subtotalPaise, discountPaise, totalPaise: subtotalPaise - discountPaise };
+  return { lineTotals, subtotalPaise, discountableSubtotalPaise, discountPaise, totalPaise: subtotalPaise - discountPaise };
+}
+
+export const SPLIT_METHODS = ["CASH", "UPI", "CARD", "OTHER"] as const;
+export type SingleMethod = (typeof SPLIT_METHODS)[number];
+
+/**
+ * Checks the parts of a payment (e.g. Cash 300 + UPI 200) against the amount due.
+ * Same-method parts are merged. Returns the cleaned list in a fixed order.
+ */
+export function validatePaymentParts(parts: { method: string; amountPaise: number }[], duePaise: number) {
+  if (parts.length === 0) throw badRequest("Add at least one payment");
+  const merged = new Map<SingleMethod, number>();
+  for (const part of parts) {
+    if (!SPLIT_METHODS.includes(part.method as SingleMethod)) throw badRequest(`"${part.method}" is not a valid payment method`);
+    if (!Number.isInteger(part.amountPaise) || part.amountPaise <= 0) throw badRequest("Each payment amount must be more than zero");
+    merged.set(part.method as SingleMethod, (merged.get(part.method as SingleMethod) ?? 0) + part.amountPaise);
+  }
+  const sum = [...merged.values()].reduce((a, b) => a + b, 0);
+  if (sum !== duePaise) {
+    throw badRequest(`Payments add up to ${formatMoney(sum)} but the bill is ${formatMoney(duePaise)}`, { paidPaise: sum, duePaise });
+  }
+  return SPLIT_METHODS.filter((m) => merged.has(m)).map((method) => ({ method, amountPaise: merged.get(method)! }));
 }
