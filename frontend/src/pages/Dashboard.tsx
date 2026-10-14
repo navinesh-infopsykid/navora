@@ -18,7 +18,7 @@ function Figure({ label, value, note }: { label: string; value: string; note?: s
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const PERIODS: Period[] = ["today", "yesterday", "week", "month", "day", "custom"];
+const PERIODS: Period[] = ["today", "yesterday", "week", "month", "fy", "lastfy", "day", "custom"];
 
 export default function Dashboard() {
   // The chosen period is kept in the address (?period=week), so refreshing keeps it.

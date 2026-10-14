@@ -71,7 +71,7 @@ export default function Invoices() {
         <PeriodPicker
           value={period}
           onChange={(v) => update({ range: v.period === "all" ? "" : v.period, from: v.from, to: v.to })}
-          options={["all", "today", "yesterday", "week", "month", "day", "custom"]}
+          options={["all", "today", "yesterday", "week", "month", "fy", "lastfy", "day", "custom"]}
         />
 
         <div className="flex flex-wrap items-end gap-3">

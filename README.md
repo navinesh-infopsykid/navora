@@ -40,8 +40,8 @@ download invoice PDFs and share them on WhatsApp.
 | Page | What you can do |
 | --- | --- |
 | **New bill** | Customer name and WhatsApp number, search items (press `/`, type, Enter), several items per bill, edit quantities, remove lines, ₹ or % discount (applies only to items that allow a discount), live subtotal and payable amount, payment method (Cash, UPI, Card, Other) or **Split** across several methods (must add up to the total), Paid or Unpaid. **Hold bill** parks the current cart on the server and **Held bills** recalls it later — up to 5 at a time. |
-| **Dashboard** | Choose Today, Yesterday, This week, This month, Pick a day or a Custom range. Shows sales, bill count and average bill, paid and unpaid totals, discounts given, money received by payment method (split payments counted under each method), bills in the period and low-stock items. |
-| **Invoices** | Filter by all, today, yesterday, this week, this month, a single chosen day or a custom date range; search by invoice number, customer name or phone; filter by Paid/Unpaid; view details; download PDF; mark unpaid invoices as paid; share on WhatsApp. |
+| **Dashboard** | Choose Today, Yesterday, This week, This month, This financial year (1 Apr – 31 Mar), Last financial year, Pick a day or a Custom range. Shows sales, bill count and average bill, paid and unpaid totals, discounts given, money received by payment method (split payments counted under each method), bills in the period and low-stock items. |
+| **Invoices** | Filter by all, today, yesterday, this week, this month, this or last financial year, a single chosen day or a custom date range; search by invoice number, customer name or phone; filter by Paid/Unpaid; view details; download PDF; mark unpaid invoices as paid; share on WhatsApp. |
 | **Items** | Add, edit, search, deactivate and reactivate products (name, optional SKU, price in ₹, stock, low-stock alert, optional description, **Discount allowed** on/off). |
 | **Stock adjustment** | Choose an item, add or remove stock with a reason, confirm, and see the full history (before, change, after, reason, time). |
 | **Settings** | Business name, address, phone, currency (default INR) and invoice footer — printed on every PDF. |
@@ -380,7 +380,7 @@ WhatsApp webhook need a logged-in session cookie (otherwise `401`).
 | `PATCH /products/:id/status` | `{ isActive: false }` to deactivate, `true` to reactivate |
 | `GET /stock-adjustments?productId=&type=ADJUSTMENT\|SALE&limit=` | Stock history |
 | `POST /stock-adjustments` | `{ productId, change: -2, reason }` |
-| `GET /invoices?range=all\|today\|yesterday\|week\|month\|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&q=&status=PAID\|UNPAID&page=&pageSize=` | List, filter and search |
+| `GET /invoices?range=all\|today\|yesterday\|week\|month\|fy\|lastfy\|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&q=&status=PAID\|UNPAID&page=&pageSize=` | List, filter and search |
 | `GET /invoices/:id` | Invoice with items, payments and WhatsApp history |
 | `POST /invoices` | Finalise a bill (see below) |
 | `POST /invoices/:id/mark-paid` | `{ paymentMethod?: "UPI" }` or a split `{ payments: [{ method: "CASH", amountPaise: 30000 }, { method: "UPI", amountPaise: 20000 }] }` |
@@ -394,7 +394,7 @@ WhatsApp webhook need a logged-in session cookie (otherwise `401`).
 | `GET /invoices/:id/whatsapp` | WhatsApp history for an invoice |
 | `GET /whatsapp/status` | Is automatic sending available? |
 | `GET, POST /whatsapp/webhook` | Meta webhook (verification + delivery statuses) |
-| `GET /dashboard?range=today\|yesterday\|week\|month\|all\|custom&from=&to=` | Dashboard figures for a period (default today) |
+| `GET /dashboard?range=today\|yesterday\|week\|month\|fy\|lastfy\|all\|custom&from=&to=` | Dashboard figures for a period (default today) |
 | `GET /settings`, `PUT /settings` | Business settings |
 
 Example bill:

@@ -9,8 +9,8 @@
  */
 import { badRequest } from "./errors";
 
-export type RangePreset = "all" | "today" | "yesterday" | "week" | "month" | "custom";
-export const RANGE_PRESETS: RangePreset[] = ["all", "today", "yesterday", "week", "month", "custom"];
+export type RangePreset = "all" | "today" | "yesterday" | "week" | "month" | "fy" | "lastfy" | "custom";
+export const RANGE_PRESETS: RangePreset[] = ["all", "today", "yesterday", "week", "month", "fy", "lastfy", "custom"];
 
 export interface DateRange {
   start: Date;
@@ -104,6 +104,15 @@ export function getDateRange(
       const first = { year: today.year, month: today.month, day: 1 };
       const nextFirst = { year: today.year, month: today.month + 1, day: 1 };
       return { start: startOfLocalDay(first, timeZone), end: startOfLocalDay(nextFirst, timeZone) };
+    }
+    case "fy":
+    case "lastfy": {
+      // Indian financial year: 1 April to 31 March.
+      const fyStartYear = (today.month >= 4 ? today.year : today.year - 1) - (preset === "lastfy" ? 1 : 0);
+      return {
+        start: startOfLocalDay({ year: fyStartYear, month: 4, day: 1 }, timeZone),
+        end: startOfLocalDay({ year: fyStartYear + 1, month: 4, day: 1 }, timeZone),
+      };
     }
     case "custom": {
       if (!options.from || !options.to) throw badRequest("Custom range needs both 'from' and 'to' dates");

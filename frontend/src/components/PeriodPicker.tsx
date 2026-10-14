@@ -4,7 +4,7 @@
  * "day" (one chosen date) is shown as its own option but sent to the API as a
  * custom range with the same from and to date.
  */
-export type Period = "all" | "today" | "yesterday" | "week" | "month" | "day" | "custom";
+export type Period = "all" | "today" | "yesterday" | "week" | "month" | "fy" | "lastfy" | "day" | "custom";
 
 export interface PeriodValue {
   period: Period;
@@ -18,6 +18,8 @@ const LABELS: Record<Period, string> = {
   yesterday: "Yesterday",
   week: "This week",
   month: "This month",
+  fy: "This financial year",
+  lastfy: "Last financial year",
   day: "Pick a day",
   custom: "Custom range",
 };

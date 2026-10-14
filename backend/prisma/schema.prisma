@@ -116,6 +116,7 @@ model Invoice {
 
   @@index([invoiceDate])
   @@index([paymentStatus])
+  @@index([customerId])
   @@index([customerName])
 }
 
@@ -145,6 +146,9 @@ model Payment {
   method      PaymentMethod
   paidAt      DateTime      @default(now())
   note        String?
+
+  @@index([invoiceId])
+  @@index([paidAt])
 }
 
 model StockMovement {

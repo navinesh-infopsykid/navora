@@ -38,6 +38,20 @@ describe("getDateRange (shop timezone = IST)", () => {
     expect(iso(r.end)).toBe("2026-10-31T18:30:00.000Z"); // 1 Nov 00:00 IST
   });
 
+  it("this financial year runs 1 April to 31 March", () => {
+    const r = getDateRange("fy", { now, timeZone: tz })!;
+    expect(iso(r.start)).toBe("2026-03-31T18:30:00.000Z"); // 1 Apr 2026 00:00 IST
+    expect(iso(r.end)).toBe("2027-03-31T18:30:00.000Z"); // 1 Apr 2027 00:00 IST
+  });
+
+  it("financial year in January-March belongs to the year that started last April", () => {
+    const feb = new Date("2027-02-10T06:00:00Z");
+    expect(iso(getDateRange("fy", { now: feb, timeZone: tz })!.start)).toBe("2026-03-31T18:30:00.000Z");
+    const last = getDateRange("lastfy", { now: feb, timeZone: tz })!;
+    expect(iso(last.start)).toBe("2025-03-31T18:30:00.000Z"); // 1 Apr 2025
+    expect(iso(last.end)).toBe("2026-03-31T18:30:00.000Z"); // 1 Apr 2026
+  });
+
   it("this month in December rolls over to January", () => {
     const r = getDateRange("month", { now: new Date("2026-12-15T10:00:00Z"), timeZone: tz })!;
     expect(iso(r.end)).toBe("2026-12-31T18:30:00.000Z"); // 1 Jan 2027 00:00 IST

@@ -198,6 +198,27 @@ on your own shop Wi-Fi.
 
 ---
 
+## 4. Keep costs low and back up every night
+
+Two scripts in `ops/` set these up. Run them once, from the project folder, after `gcloud` is logged in.
+
+```bash
+bash ops/cost-guards.sh     # ₹500 budget alert, old-image cleanup, daily keep-alive, 0–1 servers
+bash ops/setup-backups.sh   # nightly backup to a private bucket in Mumbai (asks for the DB string once)
+```
+
+Once a month, test that the newest backup really restores (on your Mac, nothing in Supabase is touched):
+
+```bash
+brew install postgresql@17 && brew services start postgresql@17   # first time only
+bash ops/check-backup.sh
+```
+
+To restore after a disaster: create a new empty Supabase project, then
+`pg_restore --no-owner --no-privileges -d "NEW_SESSION_POOLER_STRING" kriva-YYYY-MM-DD.dump`
+(download the file with `gcloud storage cp gs://kriva-billing-backups-511512/daily/kriva-YYYY-MM-DD.dump .`),
+put the new string in `cloudrun.env.yaml` and redeploy. Never restore over the live database.
+
 ## Keep in mind
 
 - **Supabase free projects pause after a week of no use.** Daily billing keeps it awake. If it pauses,
