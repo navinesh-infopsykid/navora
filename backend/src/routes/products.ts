@@ -12,6 +12,9 @@ const productFields = {
   lowStockThreshold: wholeNumber,
   description: optionalText(500),
   discountAllowed: z.boolean().optional(),
+  noPackaging: z.boolean().optional(),
+  /** Custom box charge per piece (paise); null = use the shop rule. */
+  packagingPaise: paise.max(1_000_00, "Packaging charge is too large").nullish(),
 };
 const createSchema = z.object({ ...productFields, stock: wholeNumber });
 const updateSchema = z.object(productFields);

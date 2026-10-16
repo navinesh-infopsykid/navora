@@ -13,9 +13,22 @@ interface FormState {
   lowStockThreshold: string;
   description: string;
   discountAllowed: boolean;
+  noPackaging: boolean;
+  /** Custom box charge in rupees; empty = shop rule. */
+  boxCharge: string;
 }
 
-const emptyForm: FormState = { name: "", sku: "", price: "", stock: "0", lowStockThreshold: "5", description: "", discountAllowed: true };
+const emptyForm: FormState = {
+  name: "",
+  sku: "",
+  price: "",
+  stock: "0",
+  lowStockThreshold: "5",
+  description: "",
+  discountAllowed: true,
+  noPackaging: false,
+  boxCharge: "",
+};
 
 export default function Items() {
   const [products, setProducts] = useState<Product[] | null>(null);
@@ -58,6 +71,8 @@ export default function Items() {
       lowStockThreshold: String(p.lowStockThreshold),
       description: p.description ?? "",
       discountAllowed: p.discountAllowed,
+      noPackaging: p.noPackaging,
+      boxCharge: p.packagingPaise === null ? "" : paiseToInput(p.packagingPaise),
     });
     setFormError(null);
     setEditing(p);
@@ -73,7 +88,19 @@ export default function Items() {
     if (editing === "new" && (!Number.isInteger(stock) || stock < 0)) return setFormError("Opening stock must be a whole number, 0 or more.");
     if (!Number.isInteger(low) || low < 0) return setFormError("Low-stock alert must be a whole number, 0 or more.");
 
-    const body = { name: form.name, sku: form.sku || null, pricePaise, lowStockThreshold: low, description: form.description || null, discountAllowed: form.discountAllowed };
+    const packagingPaise = form.boxCharge.trim() === "" ? null : parseRupees(form.boxCharge);
+    if (!form.noPackaging && form.boxCharge.trim() !== "" && packagingPaise === null) return setFormError("Enter the box charge like 30 or 2.50, or leave it empty.");
+
+    const body = {
+      name: form.name,
+      sku: form.sku || null,
+      pricePaise,
+      lowStockThreshold: low,
+      description: form.description || null,
+      discountAllowed: form.discountAllowed,
+      noPackaging: form.noPackaging,
+      packagingPaise: form.noPackaging ? null : packagingPaise,
+    };
     setSaving(true);
     try {
       if (editing === "new") await api.post("/products", { ...body, stock });
@@ -147,6 +174,14 @@ export default function Items() {
                         {p.name} {!p.isActive && <span className="ml-1 text-xs font-normal">(deactivated)</span>}
                         {!p.discountAllowed && (
                           <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">No discount</span>
+                        )}
+                        {p.noPackaging && (
+                          <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">No packaging</span>
+                        )}
+                        {!p.noPackaging && p.packagingPaise !== null && (
+                          <span className="num ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">
+                            Box {formatMoney(p.packagingPaise)}
+                          </span>
                         )}
                       </div>
                       <div className="text-xs text-ink-soft">{[p.sku, p.description].filter(Boolean).join(", ")}</div>
@@ -240,6 +275,37 @@ export default function Items() {
               </span>
             </span>
           </label>
+          <div className="rounded-md border border-rule p-3">
+            <span className="block text-sm font-medium">Packaging (takeaway and delivery)</span>
+            <label className="mt-2 flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-khata"
+                checked={form.noPackaging}
+                onChange={(e) => setForm({ ...form, noPackaging: e.target.checked })}
+              />
+              <span className="text-sm">
+                No packaging for this item
+                <span className="block text-xs text-ink-soft">For drinks or items that never go in a box.</span>
+              </span>
+            </label>
+            {!form.noPackaging && (
+              <div className="mt-3">
+                <label className="label" htmlFor="boxCharge">
+                  Own box charge per piece, ₹ (optional)
+                </label>
+                <input
+                  id="boxCharge"
+                  className="field num"
+                  inputMode="decimal"
+                  placeholder="Empty = shop rule from Settings"
+                  value={form.boxCharge}
+                  onChange={(e) => setForm({ ...form, boxCharge: e.target.value })}
+                />
+                <p className="mt-1 text-xs text-ink-soft">For example 30 for a 1 kg cake box. Leave empty to follow the rule in Settings.</p>
+              </div>
+            )}
+          </div>
           <div>
             <label className="label" htmlFor="description">
               Description (optional)

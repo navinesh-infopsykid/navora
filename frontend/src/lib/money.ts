@@ -77,3 +77,42 @@ export function previewTotals(
 export function paiseToText(paise: number) {
   return paise % 100 === 0 ? String(paise / 100) : (paise / 100).toFixed(2);
 }
+
+/** Packaging rule from Settings (same meaning as the server's). */
+export interface PackagingRules {
+  minPricePaise: number;
+  boxPaise: number;
+  bagPaise: number;
+  onTakeaway: boolean;
+  onDelivery: boolean;
+}
+
+export function packagingApplies(orderType: "DINE_IN" | "TAKEAWAY" | "DELIVERY", rules: PackagingRules) {
+  return (orderType === "TAKEAWAY" && rules.onTakeaway) || (orderType === "DELIVERY" && rules.onDelivery);
+}
+
+/**
+ * Live preview of box + bag charges. Mirrors calculatePackaging() on the server,
+ * which recalculates from database prices when the bill is saved.
+ */
+export function previewPackaging(
+  lines: { unitPricePaise: number; quantity: number; noPackaging?: boolean; packagingPaise?: number | null }[],
+  orderType: "DINE_IN" | "TAKEAWAY" | "DELIVERY",
+  rules: PackagingRules,
+  bags: number,
+) {
+  if (!packagingApplies(orderType, rules)) return { applies: false, boxCount: 0, boxPaise: 0, bagCount: 0, bagPaise: 0, totalPaise: 0 };
+  let boxCount = 0;
+  let boxPaise = 0;
+  for (const l of lines) {
+    if (l.noPackaging) continue;
+    const perPiece = l.packagingPaise ?? (l.unitPricePaise >= rules.minPricePaise ? rules.boxPaise : 0);
+    if (perPiece > 0) {
+      boxCount += l.quantity;
+      boxPaise += perPiece * l.quantity;
+    }
+  }
+  const bagCount = Math.max(1, bags);
+  const bagPaise = bagCount * rules.bagPaise;
+  return { applies: true, boxCount, boxPaise, bagCount, bagPaise, totalPaise: boxPaise + bagPaise };
+}

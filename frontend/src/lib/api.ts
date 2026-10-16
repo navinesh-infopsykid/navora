@@ -26,6 +26,7 @@ export type SingleMethod = "CASH" | "UPI" | "CARD" | "OTHER";
 export type PaymentMethod = SingleMethod | "SPLIT";
 export type PaymentStatus = "PAID" | "UNPAID";
 export type DiscountType = "NONE" | "FIXED" | "PERCENT";
+export type OrderType = "DINE_IN" | "TAKEAWAY" | "DELIVERY";
 
 export interface Product {
   id: number;
@@ -37,6 +38,10 @@ export interface Product {
   description: string | null;
   /** false = the bill discount never applies to this item. */
   discountAllowed: boolean;
+  /** true = never charge packaging for this item. */
+  noPackaging: boolean;
+  /** Custom box charge per piece (paise); null = the shop rule. */
+  packagingPaise: number | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +69,8 @@ export interface InvoiceItem {
   quantity: number;
   lineTotalPaise: number;
   discountAllowed: boolean;
+  /** Box charge for this line, copied when the bill was saved. */
+  packagingPaise: number;
 }
 
 export interface Payment {
@@ -94,6 +101,11 @@ export interface Invoice {
   discountType: DiscountType;
   discountValue: number;
   discountPaise: number;
+  orderType: OrderType;
+  boxCount: number;
+  packagingPaise: number;
+  bagCount: number;
+  bagPaise: number;
   totalPaise: number;
   paymentStatus: PaymentStatus;
   paymentMethod: PaymentMethod;
@@ -119,6 +131,11 @@ export interface Settings {
   currency: string;
   invoiceFooter: string;
   invoicePrefix: string;
+  packagingMinPricePaise: number;
+  packagingBoxPaise: number;
+  packagingBagPaise: number;
+  packagingOnTakeaway: boolean;
+  packagingOnDelivery: boolean;
 }
 
 export interface Dashboard {
@@ -132,9 +149,11 @@ export interface Dashboard {
     averageBillPaise: number;
   };
   receivedByMethod: { method: SingleMethod; amountPaise: number; count: number }[];
+  packaging: { boxPaise: number; bagPaise: number; totalPaise: number; boxCount: number; bagCount: number };
+  salesByOrderType: { orderType: OrderType; salesPaise: number; count: number }[];
   outstandingUnpaid: { totalPaise: number; count: number };
   lowStockProducts: Product[];
-  recentInvoices: Pick<Invoice, "id" | "invoiceNumber" | "customerName" | "invoiceDate" | "totalPaise" | "paymentStatus" | "paymentMethod">[];
+  recentInvoices: Pick<Invoice, "id" | "invoiceNumber" | "customerName" | "invoiceDate" | "totalPaise" | "paymentStatus" | "paymentMethod" | "orderType">[];
 }
 
 export interface HeldCart {
@@ -144,6 +163,8 @@ export interface HeldCart {
   discountType: DiscountType;
   /** FIXED: paise. PERCENT: basis points. */
   discountValue: number;
+  orderType: OrderType;
+  bagCount: number;
   items: { productId: number; quantity: number; product: { id: number; name: string; pricePaise: number; isActive: boolean } | null }[];
   itemCount: number;
   estimatePaise: number;

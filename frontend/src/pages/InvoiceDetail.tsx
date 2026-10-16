@@ -5,7 +5,7 @@ import PaymentInput, { emptyPayment, paymentPayload, type PaymentState } from ".
 import WhatsAppShare, { WHATSAPP_STATUS_TEXT } from "../components/WhatsAppShare";
 import { Notice, Spinner, StatusBadge } from "../components/ui";
 import { api, errorMessage, pdfUrl, type Invoice } from "../lib/api";
-import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
+import { formatDateTime, formatPhone, METHOD_LABELS, ORDER_TYPE_LABELS } from "../lib/format";
 import { formatMoney } from "../lib/money";
 
 export default function InvoiceDetail() {
@@ -68,7 +68,9 @@ export default function InvoiceDetail() {
           <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight">
             {invoice.invoiceNumber} <StatusBadge status={invoice.paymentStatus} />
           </h1>
-          <p className="num mt-1 text-ink-soft">{formatDateTime(invoice.invoiceDate)}</p>
+          <p className="num mt-1 text-ink-soft">
+            {formatDateTime(invoice.invoiceDate)} · {ORDER_TYPE_LABELS[invoice.orderType]}
+          </p>
         </div>
         <div className="flex gap-2">
           <a className="btn btn-secondary" href={`${pdfUrl(invoice.id)}?inline=1`} target="_blank" rel="noreferrer">
@@ -122,6 +124,20 @@ export default function InvoiceDetail() {
               <div className="flex justify-between">
                 <dt className="text-ink-soft">{discountText}</dt>
                 <dd>− {formatMoney(invoice.discountPaise)}</dd>
+              </div>
+            )}
+            {invoice.packagingPaise > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-ink-soft">
+                  Box charges ({invoice.boxCount} {invoice.boxCount === 1 ? "box" : "boxes"})
+                </dt>
+                <dd>{formatMoney(invoice.packagingPaise)}</dd>
+              </div>
+            )}
+            {invoice.bagPaise > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-ink-soft">Carry bag{invoice.bagCount > 1 ? ` × ${invoice.bagCount}` : ""}</dt>
+                <dd>{formatMoney(invoice.bagPaise)}</dd>
               </div>
             )}
             <div className="flex justify-between border-t border-rule pt-2 text-base font-semibold">

@@ -10,6 +10,10 @@ export interface ProductInput {
   description?: string | null;
   /** false = bill discounts never apply to this item. Defaults to true. */
   discountAllowed?: boolean;
+  /** true = never charge packaging for this item. */
+  noPackaging?: boolean;
+  /** Custom box charge per piece in paise; null = use the shop rule; undefined = leave unchanged. */
+  packagingPaise?: number | null;
 }
 
 export interface CreateProductInput extends ProductInput {
@@ -53,6 +57,8 @@ export async function createProduct(input: CreateProductInput) {
         lowStockThreshold: input.lowStockThreshold,
         description: clean(input.description),
         discountAllowed: input.discountAllowed ?? true,
+        noPackaging: input.noPackaging ?? false,
+        packagingPaise: input.packagingPaise ?? null,
       },
     });
     if (input.stock > 0) {
@@ -83,6 +89,8 @@ export async function updateProduct(id: number, input: ProductInput) {
       lowStockThreshold: input.lowStockThreshold,
       description: clean(input.description),
       ...(input.discountAllowed === undefined ? {} : { discountAllowed: input.discountAllowed }),
+      ...(input.noPackaging === undefined ? {} : { noPackaging: input.noPackaging }),
+      ...(input.packagingPaise === undefined ? {} : { packagingPaise: input.packagingPaise }),
     },
   });
 }

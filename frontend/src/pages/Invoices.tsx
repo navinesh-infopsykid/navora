@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import PeriodPicker, { periodParams, type Period, type PeriodValue } from "../components/PeriodPicker";
 import { EmptyState, Notice, PageHeader, Spinner, StatusBadge } from "../components/ui";
 import { api, errorMessage, pdfUrl, type InvoiceList } from "../lib/api";
-import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
+import { formatDateTime, formatPhone, METHOD_LABELS, ORDER_TYPE_LABELS } from "../lib/format";
 import { formatMoney } from "../lib/money";
 
 export default function Invoices() {
@@ -12,6 +12,7 @@ export default function Invoices() {
   const [params, setParams] = useSearchParams();
   const range = (params.get("range") as Period) ?? "all";
   const status = params.get("status") ?? "";
+  const orderType = params.get("orderType") ?? "";
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
   const page = Number(params.get("page") ?? 1);
@@ -51,7 +52,7 @@ export default function Invoices() {
     }
     setLoading(true);
     api
-      .get<InvoiceList>("/invoices", { params: { ...dates, status: status || undefined, q: q || undefined, page, pageSize: 25 } })
+      .get<InvoiceList>("/invoices", { params: { ...dates, status: status || undefined, orderType: orderType || undefined, q: q || undefined, page, pageSize: 25 } })
       .then((r) => {
         setData(r.data);
         setError(null);
@@ -59,7 +60,7 @@ export default function Invoices() {
       .catch((e) => setError(errorMessage(e)))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, status, from, to, q, page]);
+  }, [range, status, orderType, from, to, q, page]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
@@ -83,6 +84,12 @@ export default function Invoices() {
             <option value="">Paid and unpaid</option>
             <option value="PAID">Paid only</option>
             <option value="UNPAID">Unpaid only</option>
+          </select>
+          <select className="field w-auto" value={orderType} onChange={(e) => update({ orderType: e.target.value })} aria-label="Order type">
+            <option value="">All order types</option>
+            <option value="DINE_IN">Dine-in</option>
+            <option value="TAKEAWAY">Takeaway</option>
+            <option value="DELIVERY">Delivery</option>
           </select>
         </div>
       </div>
@@ -124,7 +131,10 @@ export default function Invoices() {
                       <Link to={`/invoices/${inv.id}`} className="font-medium hover:underline" onClick={(e) => e.stopPropagation()}>
                         {inv.invoiceNumber}
                       </Link>
-                      <div className="num text-xs text-ink-soft">{formatDateTime(inv.invoiceDate)}</div>
+                      <div className="num text-xs text-ink-soft">
+                        {formatDateTime(inv.invoiceDate)}
+                        {inv.orderType !== "DINE_IN" && ` · ${ORDER_TYPE_LABELS[inv.orderType]}`}
+                      </div>
                     </td>
                     <td className="px-3 py-3">
                       <div>{inv.customerName}</div>
@@ -136,6 +146,9 @@ export default function Invoices() {
                     <td className="num px-3 py-3 text-right font-medium">
                       {formatMoney(inv.totalPaise)}
                       {inv.discountPaise > 0 && <div className="text-xs font-normal text-ink-soft">after {formatMoney(inv.discountPaise)} off</div>}
+                      {inv.packagingPaise + inv.bagPaise > 0 && (
+                        <div className="text-xs font-normal text-ink-soft">incl. {formatMoney(inv.packagingPaise + inv.bagPaise)} packaging</div>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       <StatusBadge status={inv.paymentStatus} />

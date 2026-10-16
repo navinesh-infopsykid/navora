@@ -4,7 +4,7 @@ import { config } from "../config";
 import { getDateRange, type RangePreset } from "../lib/dates";
 import { prisma } from "../lib/db";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { calculateTotals, validatePaymentParts, type DiscountType } from "../lib/money";
+import { calculatePackaging, calculateTotals, rulesFromSettings, validatePaymentParts, type DiscountType, type OrderType } from "../lib/money";
 import { normalizePhone } from "../lib/phone";
 import { SETTINGS_ID } from "./settingsService";
 
@@ -21,6 +21,10 @@ export interface CreateInvoiceInput {
   /** Split payment, e.g. [{CASH, 30000}, {UPI, 20000}]. Must add up to the total. PAID bills only. */
   payments?: { method: PaymentMethod; amountPaise: number }[] | null;
   notes?: string | null;
+  /** DINE_IN (default), TAKEAWAY or DELIVERY. Takeaway/delivery may add packaging (shop rule in Settings). */
+  orderType?: OrderType;
+  /** Carry bags for takeaway/delivery. At least 1 (mandatory); ignored for dine-in. */
+  bagCount?: number | null;
 }
 
 /**
@@ -63,6 +67,8 @@ interface LockedProduct {
   stock: number;
   isActive: boolean;
   discountAllowed: boolean;
+  noPackaging: boolean;
+  packagingPaise: number | null;
 }
 
 /**
@@ -90,7 +96,7 @@ export async function createInvoice(input: CreateInvoiceInput) {
       //    Two counters billing the same item at the same moment simply wait for each other,
       //    so the stock numbers we read here are exact. Rows are locked in id order to avoid deadlocks.
       const products = await tx.$queryRaw<LockedProduct[]>`
-        SELECT "id", "name", "sku", "pricePaise", "stock", "isActive", "discountAllowed"
+        SELECT "id", "name", "sku", "pricePaise", "stock", "isActive", "discountAllowed", "noPackaging", "packagingPaise"
         FROM "Product"
         WHERE "id" IN (${Prisma.join(ids)})
         ORDER BY "id"
@@ -109,19 +115,43 @@ export async function createInvoice(input: CreateInvoiceInput) {
         }
       }
 
-      // 2. Calculate money on the server (prices come from the database, never from the browser).
+      // 2. Next invoice number + the shop's packaging rule (one row). Incrementing the counter
+      //    locks this row, so invoice numbers are never duplicated; a rollback gives the number back.
+      const settings = await tx.businessSettings.upsert({
+        where: { id: SETTINGS_ID },
+        update: { nextInvoiceNumber: { increment: 1 } },
+        create: { id: SETTINGS_ID, nextInvoiceNumber: 2 },
+      });
+      const serial = settings.nextInvoiceNumber - 1;
+      const invoiceNumber = `${settings.invoicePrefix}-${String(serial).padStart(5, "0")}`;
+
+      // 3. Calculate money on the server (prices come from the database, never from the browser).
+      //    Packaging is added AFTER the discount, so it is never discounted.
       const lines = items.map((item) => ({ ...item, product: byId.get(item.productId)! }));
       const totals = calculateTotals(
         lines.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity, discountAllowed: l.product.discountAllowed })),
         input.discountType,
         input.discountValue,
       );
+      const orderType: OrderType = input.orderType ?? "DINE_IN";
+      const packaging = calculatePackaging(
+        lines.map((l) => ({
+          unitPricePaise: l.product.pricePaise,
+          quantity: l.quantity,
+          noPackaging: l.product.noPackaging,
+          packagingPaise: l.product.packagingPaise,
+        })),
+        orderType,
+        rulesFromSettings(settings),
+        input.bagCount,
+      );
+      const totalPaise = totals.totalPaise + packaging.totalPaise;
       const isPaid = input.paymentStatus === "PAID";
       if (!isPaid && input.payments?.length) throw badRequest("An unpaid bill can't have payments. Choose Paid, or remove the payments.");
-      const plan = isPaid ? planPayments(totals.totalPaise, input.paymentMethod, input.payments) : null;
+      const plan = isPaid ? planPayments(totalPaise, input.paymentMethod, input.payments) : null;
       if (!isPaid && input.paymentMethod === "SPLIT") throw badRequest("Choose one payment method for an unpaid bill");
 
-      // 3. Deduct stock for every line in ONE statement. "stock >= qty" is a final safety net.
+      // 4. Deduct stock for every line in ONE statement. "stock >= qty" is a final safety net.
       const values = Prisma.join(lines.map((l) => Prisma.sql`(${l.productId}::int, ${l.quantity}::int)`));
       const deducted = await tx.$executeRaw`
         UPDATE "Product" AS p
@@ -130,19 +160,10 @@ export async function createInvoice(input: CreateInvoiceInput) {
         WHERE p."id" = v.id AND p."stock" >= v.qty`;
       if (deducted !== lines.length) throw conflict("Stock changed while saving. Please try again.");
 
-      // 4. Customer: reuse the same customer when the phone number matches.
+      // 5. Customer: reuse the same customer when the phone number matches.
       const customer = customerPhone
         ? await tx.customer.upsert({ where: { phone: customerPhone }, update: { name: customerName }, create: { name: customerName, phone: customerPhone } })
         : await tx.customer.create({ data: { name: customerName } });
-
-      // 5. Next invoice number. Incrementing this row locks it, so numbers are never duplicated.
-      const settings = await tx.businessSettings.upsert({
-        where: { id: SETTINGS_ID },
-        update: { nextInvoiceNumber: { increment: 1 } },
-        create: { id: SETTINGS_ID, nextInvoiceNumber: 2 },
-      });
-      const serial = settings.nextInvoiceNumber - 1;
-      const invoiceNumber = `${settings.invoicePrefix}-${String(serial).padStart(5, "0")}`;
 
       // 6. Invoice, then its items (names and prices are copied so old invoices never change).
       const now = new Date();
@@ -157,7 +178,12 @@ export async function createInvoice(input: CreateInvoiceInput) {
           discountType: input.discountType,
           discountValue: input.discountType === "NONE" ? 0 : input.discountValue,
           discountPaise: totals.discountPaise,
-          totalPaise: totals.totalPaise,
+          orderType,
+          boxCount: packaging.boxCount,
+          packagingPaise: packaging.packagingPaise,
+          bagCount: packaging.bagCount,
+          bagPaise: packaging.bagPaise,
+          totalPaise,
           paymentStatus: input.paymentStatus,
           paymentMethod: plan?.invoiceMethod ?? input.paymentMethod,
           paidAt: isPaid ? now : null,
@@ -174,6 +200,7 @@ export async function createInvoice(input: CreateInvoiceInput) {
           quantity: line.quantity,
           lineTotalPaise: totals.lineTotals[index],
           discountAllowed: line.product.discountAllowed,
+          packagingPaise: packaging.linePackaging[index],
         })),
       });
 
@@ -256,6 +283,7 @@ export interface InvoiceListQuery {
   to?: string;
   q?: string;
   status?: PaymentStatus;
+  orderType?: OrderType;
   page: number;
   pageSize: number;
   now?: Date;
@@ -267,6 +295,7 @@ export function buildInvoiceWhere(query: Omit<InvoiceListQuery, "page" | "pageSi
   const range = getDateRange(query.range, { from: query.from, to: query.to, now: query.now, timeZone: config.timezone });
   if (range) where.invoiceDate = { gte: range.start, lt: range.end };
   if (query.status) where.paymentStatus = query.status;
+  if (query.orderType) where.orderType = query.orderType;
 
   const q = query.q?.trim();
   if (q) {

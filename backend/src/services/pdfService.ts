@@ -6,6 +6,7 @@ import { displayPhone } from "../lib/phone";
 import { getInvoice } from "./invoiceService";
 import { getSettings } from "./settingsService";
 
+const ORDER_LABEL: Record<string, string> = { DINE_IN: "Dine-in", TAKEAWAY: "Takeaway", DELIVERY: "Delivery" };
 const METHOD_LABEL: Record<string, string> = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other", SPLIT: "Split" };
 
 function discountLabel(type: string, value: number) {
@@ -44,6 +45,9 @@ export async function buildInvoicePdf(invoiceId: number): Promise<{ buffer: Buff
     .font("Helvetica-Bold")
     .fillColor(invoice.paymentStatus === "PAID" ? "#047857" : "#b45309")
     .text(invoice.paymentStatus === "PAID" ? "PAID" : "UNPAID", { width, align: "right" });
+  if (invoice.orderType !== "DINE_IN") {
+    doc.font("Helvetica").fillColor("#4b5563").text(ORDER_LABEL[invoice.orderType], { width, align: "right" });
+  }
 
   // Bill to
   let y = Math.max(doc.y, 130) + 20;
@@ -95,6 +99,10 @@ export async function buildInvoicePdf(invoiceId: number): Promise<{ buffer: Buff
   };
   totalRow("Subtotal", money(invoice.subtotalPaise));
   if (invoice.discountPaise > 0) totalRow(discountLabel(invoice.discountType, invoice.discountValue), `- ${money(invoice.discountPaise)}`);
+  if (invoice.packagingPaise > 0) {
+    totalRow(`Box charges (${invoice.boxCount} ${invoice.boxCount === 1 ? "box" : "boxes"})`, money(invoice.packagingPaise));
+  }
+  if (invoice.bagPaise > 0) totalRow(`Carry bag${invoice.bagCount > 1 ? ` x ${invoice.bagCount}` : ""}`, money(invoice.bagPaise));
   totalRow("Total", money(invoice.totalPaise), true);
 
   y += 10;

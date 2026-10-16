@@ -2,7 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { RANGE_PRESETS } from "../lib/dates";
-import { optionalText, parse, parseId, paymentMethod, paymentParts, paymentStatus } from "../lib/validation";
+import { optionalText, orderType, parse, parseId, paymentMethod, paymentParts, paymentStatus } from "../lib/validation";
 import * as invoices from "../services/invoiceService";
 import { buildInvoicePdf } from "../services/pdfService";
 import * as whatsapp from "../services/whatsappService";
@@ -23,6 +23,8 @@ const createSchema = z
     paymentStatus,
     payments: paymentParts,
     notes: optionalText(500),
+    orderType: orderType.optional(),
+    bagCount: z.number().int().min(1).max(20).nullish(),
   })
   .refine((d) => d.discountType !== "PERCENT" || d.discountValue <= 10_000, {
     message: "Discount percentage cannot be more than 100%",
@@ -35,6 +37,7 @@ const listSchema = z.object({
   to: z.string().optional(),
   q: z.string().max(100).optional(),
   status: paymentStatus.optional(),
+  orderType: orderType.optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });

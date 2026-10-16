@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { optionalText, parse, parseId } from "../lib/validation";
+import { optionalText, orderType, parse, parseId } from "../lib/validation";
 import { deleteHeldCart, holdCart, listHeldCarts, recallCart } from "../services/heldCartService";
 
 const router = Router();
@@ -22,6 +22,8 @@ router.post("/", async (req, res) => {
         .array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().min(1).max(100_000) }))
         .min(1, "Add at least one item before holding the bill")
         .max(200),
+      orderType: orderType.optional(),
+      bagCount: z.number().int().min(0).max(20).nullish(),
     }),
     req.body,
   );

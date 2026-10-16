@@ -39,12 +39,12 @@ download invoice PDFs and share them on WhatsApp.
 
 | Page | What you can do |
 | --- | --- |
-| **New bill** | Customer name and WhatsApp number, search items (press `/`, type, Enter), several items per bill, edit quantities, remove lines, ₹ or % discount (applies only to items that allow a discount), live subtotal and payable amount, payment method (Cash, UPI, Card, Other) or **Split** across several methods (must add up to the total), Paid or Unpaid. **Hold bill** parks the current cart on the server and **Held bills** recalls it later — up to 5 at a time. |
+| **New bill** | Order type (Dine-in, Takeaway, Delivery). For takeaway/delivery, packaging is added automatically: a box charge for each item priced at or above a limit (default ₹5 per item of ₹50+) plus a mandatory carry bag (default ₹5, staff can add more bags). Packaging is never discounted. Customer name and WhatsApp number, search items (press `/`, type, Enter), several items per bill, edit quantities, remove lines, ₹ or % discount (applies only to items that allow a discount), live subtotal and payable amount, payment method (Cash, UPI, Card, Other) or **Split** across several methods (must add up to the total), Paid or Unpaid. **Hold bill** parks the current cart on the server and **Held bills** recalls it later — up to 5 at a time. |
 | **Dashboard** | Choose Today, Yesterday, This week, This month, This financial year (1 Apr – 31 Mar), Last financial year, Pick a day or a Custom range. Shows sales, bill count and average bill, paid and unpaid totals, discounts given, money received by payment method (split payments counted under each method), bills in the period and low-stock items. |
 | **Invoices** | Filter by all, today, yesterday, this week, this month, this or last financial year, a single chosen day or a custom date range; search by invoice number, customer name or phone; filter by Paid/Unpaid; view details; download PDF; mark unpaid invoices as paid; share on WhatsApp. |
-| **Items** | Add, edit, search, deactivate and reactivate products (name, optional SKU, price in ₹, stock, low-stock alert, optional description, **Discount allowed** on/off). |
+| **Items** | Add, edit, search, deactivate and reactivate products (name, optional SKU, price in ₹, stock, low-stock alert, optional description, **Discount allowed** on/off, **No packaging** on/off, optional own box charge such as ₹30 for a cake box). |
 | **Stock adjustment** | Choose an item, add or remove stock with a reason, confirm, and see the full history (before, change, after, reason, time). |
-| **Settings** | Business name, address, phone, currency (default INR) and invoice footer — printed on every PDF. |
+| **Settings** | Business name, address, phone, currency (default INR) and invoice footer — printed on every PDF. **Packaging charges** (owner only): box limit, box charge, bag charge, and whether they apply to takeaway and/or delivery. |
 
 ---
 
@@ -375,12 +375,12 @@ WhatsApp webhook need a logged-in session cookie (otherwise `401`).
 | `GET /customers?search=` | Saved customers for the billing dropdown |
 | `GET /products?search=&includeInactive=true&lowStock=true` | List products |
 | `GET /products/:id` | One product |
-| `POST /products` | Create `{ name, sku?, pricePaise, stock, lowStockThreshold, description?, discountAllowed? }` (discountAllowed defaults to true) |
+| `POST /products` | Create `{ name, sku?, pricePaise, stock, lowStockThreshold, description?, discountAllowed?, noPackaging?, packagingPaise? }` (discountAllowed defaults to true; packagingPaise null = shop rule) |
 | `PUT /products/:id` | Update details (not stock) |
 | `PATCH /products/:id/status` | `{ isActive: false }` to deactivate, `true` to reactivate |
 | `GET /stock-adjustments?productId=&type=ADJUSTMENT\|SALE&limit=` | Stock history |
 | `POST /stock-adjustments` | `{ productId, change: -2, reason }` |
-| `GET /invoices?range=all\|today\|yesterday\|week\|month\|fy\|lastfy\|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&q=&status=PAID\|UNPAID&page=&pageSize=` | List, filter and search |
+| `GET /invoices?range=all\|today\|yesterday\|week\|month\|fy\|lastfy\|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&q=&status=PAID\|UNPAID&orderType=DINE_IN\|TAKEAWAY\|DELIVERY&page=&pageSize=` | List, filter and search |
 | `GET /invoices/:id` | Invoice with items, payments and WhatsApp history |
 | `POST /invoices` | Finalise a bill (see below) |
 | `POST /invoices/:id/mark-paid` | `{ paymentMethod?: "UPI" }` or a split `{ payments: [{ method: "CASH", amountPaise: 30000 }, { method: "UPI", amountPaise: 20000 }] }` |
@@ -396,6 +396,7 @@ WhatsApp webhook need a logged-in session cookie (otherwise `401`).
 | `GET, POST /whatsapp/webhook` | Meta webhook (verification + delivery statuses) |
 | `GET /dashboard?range=today\|yesterday\|week\|month\|fy\|lastfy\|all\|custom&from=&to=` | Dashboard figures for a period (default today) |
 | `GET /settings`, `PUT /settings` | Business settings |
+| `PUT /settings/packaging` | Owner only. `{ packagingMinPricePaise, packagingBoxPaise, packagingBagPaise, packagingOnTakeaway, packagingOnDelivery }` |
 
 Example bill:
 
@@ -416,7 +417,9 @@ POST /api/invoices
 `1000` = 10%). The discount is worked out only on items whose product has `discountAllowed: true`;
 a fixed discount can't be more than those items' total. For a split payment send `"paymentMethod": "SPLIT"`
 with `"payments": [{ "method": "CASH", "amountPaise": 30000 }, { "method": "UPI", "amountPaise": 29010 }]`;
-the amounts must add up exactly to the bill total. Phone numbers are stored with the country code (`919876543210`); 10-digit numbers get
+the amounts must add up exactly to the bill total. Send `"orderType": "TAKEAWAY"` or `"DELIVERY"` (default `"DINE_IN"`)
+and optionally `"bagCount": 2`; the server adds box and bag charges from the rule in Settings, after the discount.
+Phone numbers are stored with the country code (`919876543210`); 10-digit numbers get
 `DEFAULT_COUNTRY_CODE` (91) added.
 
 ---

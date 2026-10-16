@@ -149,3 +149,102 @@ export function validatePaymentParts(parts: { method: string; amountPaise: numbe
   }
   return SPLIT_METHODS.filter((m) => merged.has(m)).map((method) => ({ method, amountPaise: merged.get(method)! }));
 }
+
+// ---------------------------------------------------------------------------
+// Packaging (boxes + carry bag) for takeaway and delivery bills
+// ---------------------------------------------------------------------------
+
+export type OrderType = "DINE_IN" | "TAKEAWAY" | "DELIVERY";
+export const ORDER_TYPES: OrderType[] = ["DINE_IN", "TAKEAWAY", "DELIVERY"];
+export const MAX_BAGS = 20;
+
+/** The shop's packaging rule (stored in BusinessSettings). */
+export interface PackagingRules {
+  /** Items whose menu price (one piece) is at or above this get a box charge. */
+  minPricePaise: number;
+  /** Box charge per piece. */
+  boxPaise: number;
+  /** Carry bag charge, mandatory once per bill. */
+  bagPaise: number;
+  onTakeaway: boolean;
+  onDelivery: boolean;
+}
+
+export interface PackagingLineInput {
+  unitPricePaise: number;
+  quantity: number;
+  /** true = never charge packaging for this item. */
+  noPackaging?: boolean;
+  /** Custom box charge per piece; null/undefined = use the shop rule. */
+  packagingPaise?: number | null;
+}
+
+export interface PackagingResult {
+  applies: boolean;
+  /** Box charge per line (charge per piece x quantity), same order as the input. */
+  linePackaging: number[];
+  boxCount: number;
+  packagingPaise: number;
+  bagCount: number;
+  bagPaise: number;
+  /** packagingPaise + bagPaise */
+  totalPaise: number;
+}
+
+export function packagingApplies(orderType: OrderType, rules: PackagingRules): boolean {
+  return (orderType === "TAKEAWAY" && rules.onTakeaway) || (orderType === "DELIVERY" && rules.onDelivery);
+}
+
+/**
+ * Packaging for one bill:
+ *  - each piece of an item priced at or above the limit pays the box charge
+ *    (or the item's own custom charge; "no packaging" items pay nothing);
+ *  - one carry bag is mandatory, staff may add more (up to MAX_BAGS).
+ * Uses menu prices, so a bill discount never changes packaging, and packaging is never discounted.
+ */
+export function calculatePackaging(
+  lines: PackagingLineInput[],
+  orderType: OrderType,
+  rules: PackagingRules,
+  requestedBags?: number | null,
+): PackagingResult {
+  if (!packagingApplies(orderType, rules)) {
+    return { applies: false, linePackaging: lines.map(() => 0), boxCount: 0, packagingPaise: 0, bagCount: 0, bagPaise: 0, totalPaise: 0 };
+  }
+  let boxCount = 0;
+  const linePackaging = lines.map((line) => {
+    if (line.noPackaging) return 0;
+    const perPiece =
+      line.packagingPaise !== null && line.packagingPaise !== undefined
+        ? line.packagingPaise
+        : line.unitPricePaise >= rules.minPricePaise
+          ? rules.boxPaise
+          : 0;
+    if (perPiece <= 0) return 0;
+    boxCount += line.quantity;
+    return perPiece * line.quantity;
+  });
+  const bags = requestedBags ?? 1;
+  if (!Number.isInteger(bags) || bags < 1) throw badRequest("Takeaway and delivery bills need at least one carry bag");
+  if (bags > MAX_BAGS) throw badRequest(`At most ${MAX_BAGS} carry bags per bill`);
+  const packagingPaise = linePackaging.reduce((s, v) => s + v, 0);
+  const bagPaise = bags * rules.bagPaise;
+  return { applies: true, linePackaging, boxCount, packagingPaise, bagCount: bags, bagPaise, totalPaise: packagingPaise + bagPaise };
+}
+
+/** Reads the packaging rule from the BusinessSettings row. */
+export function rulesFromSettings(s: {
+  packagingMinPricePaise: number;
+  packagingBoxPaise: number;
+  packagingBagPaise: number;
+  packagingOnTakeaway: boolean;
+  packagingOnDelivery: boolean;
+}): PackagingRules {
+  return {
+    minPricePaise: s.packagingMinPricePaise,
+    boxPaise: s.packagingBoxPaise,
+    bagPaise: s.packagingBagPaise,
+    onTakeaway: s.packagingOnTakeaway,
+    onDelivery: s.packagingOnDelivery,
+  };
+}

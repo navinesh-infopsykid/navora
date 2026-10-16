@@ -1,13 +1,14 @@
-import { CheckCircle2, Clock3, Minus, PauseCircle, Plus, Search, Trash2 } from "lucide-react";
+import { Bike, CheckCircle2, Clock3, Minus, PauseCircle, Plus, Search, ShoppingBag, Trash2, UtensilsCrossed } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import CustomerFields from "../components/CustomerFields";
 import PaymentInput, { emptyPayment, paymentPayload, type PaymentState } from "../components/PaymentInput";
 import WhatsAppShare from "../components/WhatsAppShare";
 import { Modal, Notice } from "../components/ui";
-import { api, errorMessage, pdfUrl, type DiscountType, type HeldCart, type Invoice, type PaymentStatus, type Product } from "../lib/api";
-import { formatDateTime, formatPhone, METHOD_LABELS } from "../lib/format";
-import { formatMoney, paiseToText, previewTotals } from "../lib/money";
+import { api, errorMessage, pdfUrl, type DiscountType, type HeldCart, type Invoice, type OrderType, type PaymentStatus, type Product } from "../lib/api";
+import { formatDateTime, formatPhone, METHOD_LABELS, ORDER_TYPE_LABELS } from "../lib/format";
+import { formatMoney, paiseToText, previewPackaging, previewTotals, type PackagingRules } from "../lib/money";
+import { useSettings } from "../lib/settings";
 
 interface CartLine {
   product: Product;
@@ -15,6 +16,14 @@ interface CartLine {
 }
 
 const MAX_HELD = 5;
+const MAX_BAGS = 20;
+const ORDER_TYPES: { value: OrderType; icon: typeof Bike }[] = [
+  { value: "DINE_IN", icon: UtensilsCrossed },
+  { value: "TAKEAWAY", icon: ShoppingBag },
+  { value: "DELIVERY", icon: Bike },
+];
+/** Used until Settings have loaded (same as the server's defaults). */
+const DEFAULT_RULES: PackagingRules = { minPricePaise: 5_000, boxPaise: 500, bagPaise: 500, onTakeaway: true, onDelivery: true };
 
 /** "Cash ₹300 + UPI ₹200" for split payments, otherwise the method name. */
 function paidByText(invoice: Invoice) {
@@ -36,6 +45,18 @@ export default function Billing() {
   const [discountText, setDiscountText] = useState("");
   const [payment, setPayment] = useState<PaymentState>(emptyPayment());
   const [status, setStatus] = useState<PaymentStatus>("PAID");
+  const [orderType, setOrderType] = useState<OrderType>("DINE_IN");
+  const [bags, setBags] = useState(1);
+  const { settings } = useSettings();
+  const rules: PackagingRules = settings
+    ? {
+        minPricePaise: settings.packagingMinPricePaise,
+        boxPaise: settings.packagingBoxPaise,
+        bagPaise: settings.packagingBagPaise,
+        onTakeaway: settings.packagingOnTakeaway,
+        onDelivery: settings.packagingOnDelivery,
+      }
+    : DEFAULT_RULES;
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Invoice | null>(null);
@@ -96,8 +117,20 @@ export default function Billing() {
       ),
     [cart, discountType, discountText],
   );
-  const pay = paymentPayload(payment, totals.totalPaise);
-  const splitError = status === "PAID" && payment.method === "SPLIT" ? (totals.totalPaise === 0 ? "This bill is ₹0, so there's nothing to split" : pay.error) : null;
+  const packaging = previewPackaging(
+    cart.map((l) => ({ unitPricePaise: l.product.pricePaise, quantity: l.quantity, noPackaging: l.product.noPackaging, packagingPaise: l.product.packagingPaise })),
+    orderType,
+    rules,
+    bags,
+  );
+  /** Items after discount, plus boxes and bag (packaging is never discounted). */
+  const payablePaise = totals.totalPaise + packaging.totalPaise;
+  const pay = paymentPayload(payment, payablePaise);
+  const splitError = status === "PAID" && payment.method === "SPLIT" ? (payablePaise === 0 ? "This bill is ₹0, so there's nothing to split" : pay.error) : null;
+
+  /** Box charge for one piece of this product on the current order type (0 = none). */
+  const boxFor = (p: Product) =>
+    !packaging.applies || p.noPackaging ? 0 : (p.packagingPaise ?? (p.pricePaise >= rules.minPricePaise ? rules.boxPaise : 0));
 
   const stockProblems = cart.filter((l) => l.quantity > l.product.stock);
   const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
@@ -143,6 +176,8 @@ export default function Billing() {
     setDiscountText("");
     setPayment(emptyPayment());
     setStatus("PAID");
+    setOrderType("DINE_IN");
+    setBags(1);
     setSaveError(null);
     setTimeout(() => searchRef.current?.focus(), 0);
   }
@@ -156,6 +191,8 @@ export default function Billing() {
       discountType: useDiscount ? discountType : "NONE",
       discountValue: useDiscount ? totals.discountValue : 0,
       items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+      orderType,
+      bagCount: packaging.applies ? packaging.bagCount : 0,
     };
   }
 
@@ -209,6 +246,8 @@ export default function Billing() {
       setDiscountText(data.discountType === "NONE" ? "" : paiseToText(data.discountValue));
       setPayment(emptyPayment());
       setStatus("PAID");
+      setOrderType(data.orderType ?? "DINE_IN");
+      setBags(Math.max(1, data.bagCount || 1));
       setSaveError(null);
       setHeldOpen(false);
       const parts = [`Recalled bill for ${data.customerName || "walk-in customer"}.`];
@@ -249,6 +288,8 @@ export default function Billing() {
         paymentMethod: isPaid ? pay.paymentMethod : payment.method === "SPLIT" ? "CASH" : payment.method,
         paymentStatus: status,
         payments: isPaid ? pay.payments : null,
+        orderType,
+        bagCount: packaging.applies ? packaging.bagCount : null,
       });
       setSaved(data);
       setNotice(null);
@@ -289,6 +330,33 @@ export default function Billing() {
 
         {loadError && <Notice kind="error">{loadError}</Notice>}
         {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
+
+        <div>
+          <span className="label" id="orderTypeLabel">
+            Order type
+          </span>
+          <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-labelledby="orderTypeLabel">
+            {ORDER_TYPES.map(({ value, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={orderType === value}
+                onClick={() => setOrderType(value)}
+                className={`flex items-center justify-center gap-1.5 rounded-md border py-2 text-sm font-medium ${
+                  orderType === value ? "border-ink bg-ink text-white" : "border-rule bg-sheet text-ink-soft hover:border-ink"
+                }`}
+              >
+                <Icon className="size-4" aria-hidden /> {ORDER_TYPE_LABELS[value]}
+              </button>
+            ))}
+          </div>
+          {packaging.applies && (
+            <p className="num mt-1.5 text-xs text-ink-soft">
+              Packaging: {formatMoney(rules.boxPaise)} box for each item of {formatMoney(rules.minPricePaise)} or more, plus a {formatMoney(rules.bagPaise)} carry bag.
+            </p>
+          )}
+        </div>
 
         <CustomerFields
           name={customerName}
@@ -388,6 +456,7 @@ export default function Billing() {
                         </div>
                         <div className={`text-xs ${over ? "font-medium text-khata" : "text-ink-soft"}`}>
                           {over ? `Only ${line.product.stock} in stock` : `${line.product.stock} in stock`}
+                          {boxFor(line.product) > 0 && <span className="num text-ink-soft"> · box {formatMoney(boxFor(line.product))} each</span>}
                         </div>
                       </td>
                       <td className="num px-2 py-2.5 text-right">{formatMoney(line.product.pricePaise)}</td>
@@ -487,10 +556,39 @@ export default function Billing() {
             )
           )}
 
+          {packaging.applies && (
+            <dl className="num mt-4 space-y-2 border-t border-rule-soft pt-3 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-ink-soft">
+                  Box charges ({packaging.boxCount} {packaging.boxCount === 1 ? "box" : "boxes"})
+                </dt>
+                <dd>{formatMoney(packaging.boxPaise)}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="flex items-center gap-2 text-ink-soft">
+                  Carry bag
+                  <span className="flex items-center rounded-md border border-rule">
+                    <button type="button" className="px-1.5 py-0.5 text-ink-soft hover:text-ink disabled:opacity-40" onClick={() => setBags((b) => Math.max(1, b - 1))} disabled={bags <= 1} aria-label="One bag fewer">
+                      <Minus className="size-3" />
+                    </button>
+                    <span className="w-6 text-center text-ink" aria-label="Bags">
+                      {packaging.bagCount}
+                    </span>
+                    <button type="button" className="px-1.5 py-0.5 text-ink-soft hover:text-ink disabled:opacity-40" onClick={() => setBags((b) => Math.min(MAX_BAGS, b + 1))} disabled={bags >= MAX_BAGS} aria-label="One more bag">
+                      <Plus className="size-3" />
+                    </button>
+                  </span>
+                </dt>
+                <dd>{formatMoney(packaging.bagPaise)}</dd>
+              </div>
+              <p className="text-xs text-ink-faint">One bag is always included for {ORDER_TYPE_LABELS[orderType].toLowerCase()}. Packaging is not discounted.</p>
+            </dl>
+          )}
+
           <div className="mt-5 border-t border-dashed border-rule pt-4">
             <div className="flex items-baseline justify-between">
               <span className="font-medium">Payable</span>
-              <span className="num text-[2.1rem] leading-none font-bold tracking-tight">{formatMoney(totals.totalPaise)}</span>
+              <span className="num text-[2.1rem] leading-none font-bold tracking-tight">{formatMoney(payablePaise)}</span>
             </div>
           </div>
 
@@ -513,7 +611,7 @@ export default function Billing() {
 
           {status === "PAID" && (
             <div className="mt-4">
-              <PaymentInput value={payment} onChange={setPayment} totalPaise={totals.totalPaise} />
+              <PaymentInput value={payment} onChange={setPayment} totalPaise={payablePaise} />
             </div>
           )}
 
@@ -540,6 +638,9 @@ export default function Billing() {
                 <div className="min-w-0">
                   <p className="font-medium">
                     {h.customerName || "Walk-in customer"}
+                    {h.orderType && h.orderType !== "DINE_IN" && (
+                      <span className="ml-2 rounded bg-rule-soft px-1.5 py-0.5 align-middle text-[11px] font-medium text-ink-soft">{ORDER_TYPE_LABELS[h.orderType]}</span>
+                    )}
                     {h.customerPhone && <span className="num ml-2 text-sm font-normal text-ink-soft">{formatPhone(h.customerPhone)}</span>}
                   </p>
                   <p className="num text-sm text-ink-soft">
@@ -581,6 +682,7 @@ export default function Billing() {
                   {saved.invoiceNumber} for <span className="num">{formatMoney(saved.totalPaise)}</span>
                 </p>
                 <p className="num text-sm text-ink-soft">
+                  {saved.orderType !== "DINE_IN" && `${ORDER_TYPE_LABELS[saved.orderType]} · `}
                   {saved.customerName}, {saved.paymentStatus === "PAID" ? `paid by ${paidByText(saved)}` : "marked unpaid"}. Stock has been updated.
                 </p>
               </div>

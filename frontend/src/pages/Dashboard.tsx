@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import PeriodPicker, { periodLabel, periodParams, type Period, type PeriodValue } from "../components/PeriodPicker";
 import { EmptyState, Notice, Spinner, StatusBadge } from "../components/ui";
 import { api, errorMessage, type Dashboard as DashboardData } from "../lib/api";
-import { formatDateTime, METHOD_LABELS } from "../lib/format";
+import { formatDateTime, METHOD_LABELS, ORDER_TYPE_LABELS } from "../lib/format";
 import { formatMoney } from "../lib/money";
 
 function Figure({ label, value, note }: { label: string; value: string; note?: string }) {
@@ -110,6 +110,24 @@ export default function Dashboard() {
               note={data.outstandingUnpaid.count > 0 ? `${formatMoney(data.outstandingUnpaid.totalPaise)} due overall` : "Nothing due overall"}
             />
             <Figure label="Discounts given" value={formatMoney(data.sales.discountPaise)} />
+          </section>
+
+          <section className="panel px-5 py-4" aria-label="Sales by order type and packaging">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-semibold">Order types and packaging</h2>
+              <p className="num text-sm text-ink-soft">
+                Packaging collected {formatMoney(data.packaging.totalPaise)} ({data.packaging.boxCount} {data.packaging.boxCount === 1 ? "box" : "boxes"}, {plural(data.packaging.bagCount, "bag")})
+              </p>
+            </div>
+            <dl className="mt-3 grid grid-cols-3 gap-3">
+              {data.salesByOrderType.map((r) => (
+                <div key={r.orderType} className="rounded-md border border-rule-soft px-3 py-2">
+                  <dt className="text-sm text-ink-soft">{ORDER_TYPE_LABELS[r.orderType]}</dt>
+                  <dd className="num text-lg font-semibold">{formatMoney(r.salesPaise)}</dd>
+                  <dd className="num text-xs text-ink-faint">{plural(r.count, "bill")}</dd>
+                </div>
+              ))}
+            </dl>
           </section>
 
           <section className="panel px-5 py-4" aria-label="Money received by payment method">

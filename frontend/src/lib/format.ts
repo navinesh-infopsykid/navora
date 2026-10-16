@@ -16,3 +16,9 @@ export function formatPhone(digits: string | null | undefined) {
 }
 
 export const METHOD_LABELS = { CASH: "Cash", UPI: "UPI", CARD: "Card", OTHER: "Other", SPLIT: "Split" } as const;
+
+export const ORDER_TYPE_LABELS: Record<"DINE_IN" | "TAKEAWAY" | "DELIVERY", string> = {
+  DINE_IN: "Dine-in",
+  TAKEAWAY: "Takeaway",
+  DELIVERY: "Delivery",
+};

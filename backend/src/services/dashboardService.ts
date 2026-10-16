@@ -22,11 +22,11 @@ export async function getDashboard(query: DashboardQuery = { range: "today" }) {
   const invoiceDate = range ? { gte: range.start, lt: range.end } : undefined;
   const paidAt = range ? { gte: range.start, lt: range.end } : undefined;
 
-  const [groups, received, outstanding, activeProducts, recentInvoices] = await Promise.all([
+  const [groups, received, outstanding, activeProducts, recentInvoices, byOrderType] = await Promise.all([
     prisma.invoice.groupBy({
       by: ["paymentStatus"],
       where: { invoiceDate },
-      _sum: { totalPaise: true, discountPaise: true },
+      _sum: { totalPaise: true, discountPaise: true, packagingPaise: true, bagPaise: true, boxCount: true, bagCount: true },
       _count: { _all: true },
     }),
     prisma.payment.groupBy({ by: ["method"], where: { paidAt }, _sum: { amountPaise: true }, _count: { _all: true } }),
@@ -36,8 +36,9 @@ export async function getDashboard(query: DashboardQuery = { range: "today" }) {
       where: { invoiceDate },
       orderBy: { invoiceDate: "desc" },
       take: 8,
-      select: { id: true, invoiceNumber: true, customerName: true, invoiceDate: true, totalPaise: true, paymentStatus: true, paymentMethod: true },
+      select: { id: true, invoiceNumber: true, customerName: true, invoiceDate: true, totalPaise: true, paymentStatus: true, paymentMethod: true, orderType: true },
     }),
+    prisma.invoice.groupBy({ by: ["orderType"], where: { invoiceDate }, _sum: { totalPaise: true }, _count: { _all: true } }),
   ]);
 
   const paid = groups.find((g) => g.paymentStatus === "PAID");
@@ -47,6 +48,8 @@ export async function getDashboard(query: DashboardQuery = { range: "today" }) {
   const invoiceCount = (paid?._count._all ?? 0) + (unpaid?._count._all ?? 0);
 
   const methods = ["CASH", "UPI", "CARD", "OTHER"] as const;
+  const sum = (key: "packagingPaise" | "bagPaise" | "boxCount" | "bagCount") => (paid?._sum[key] ?? 0) + (unpaid?._sum[key] ?? 0);
+  const orderTypes = ["DINE_IN", "TAKEAWAY", "DELIVERY"] as const;
   return {
     range: range ? { start: range.start, end: range.end } : null,
     sales: {
@@ -60,6 +63,18 @@ export async function getDashboard(query: DashboardQuery = { range: "today" }) {
     receivedByMethod: methods.map((method) => {
       const row = received.find((r) => r.method === method);
       return { method, amountPaise: row?._sum.amountPaise ?? 0, count: row?._count._all ?? 0 };
+    }),
+    // Box + carry bag charges collected on bills made in the period.
+    packaging: {
+      boxPaise: sum("packagingPaise"),
+      bagPaise: sum("bagPaise"),
+      totalPaise: sum("packagingPaise") + sum("bagPaise"),
+      boxCount: sum("boxCount"),
+      bagCount: sum("bagCount"),
+    },
+    salesByOrderType: orderTypes.map((orderType) => {
+      const row = byOrderType.find((r) => r.orderType === orderType);
+      return { orderType, salesPaise: row?._sum.totalPaise ?? 0, count: row?._count._all ?? 0 };
     }),
     outstandingUnpaid: { totalPaise: outstanding._sum.totalPaise ?? 0, count: outstanding._count._all },
     // Comparing two columns is simplest in JavaScript for a small shop's product list.

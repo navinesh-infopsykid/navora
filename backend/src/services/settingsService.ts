@@ -31,6 +31,19 @@ export async function updateSettings(input: SettingsInput) {
   return prisma.businessSettings.upsert({ where: { id: SETTINGS_ID }, update: data, create: { id: SETTINGS_ID, ...data } });
 }
 
+export interface PackagingSettingsInput {
+  packagingMinPricePaise: number;
+  packagingBoxPaise: number;
+  packagingBagPaise: number;
+  packagingOnTakeaway: boolean;
+  packagingOnDelivery: boolean;
+}
+
+/** Changes the packaging rule. Only affects bills saved from now on (old bills keep their packaging). */
+export async function updatePackagingSettings(input: PackagingSettingsInput) {
+  return prisma.businessSettings.upsert({ where: { id: SETTINGS_ID }, update: input, create: { id: SETTINGS_ID, ...input } });
+}
+
 /** Public view of settings (hides the internal invoice counter). */
 export function publicSettings(settings: Awaited<ReturnType<typeof getSettings>>) {
   const { nextInvoiceNumber: _counter, ...rest } = settings;

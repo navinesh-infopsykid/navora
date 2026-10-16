@@ -31,12 +31,12 @@ const GRAPH = "https://graph.facebook.com";
 // Manual wa.me link
 // ---------------------------------------------------------------------------
 
-export function buildShareMessage(params: { customerName: string; businessName: string; invoiceNumber: string; total: string }) {
+export function buildShareMessage(params: { customerName: string; businessName: string; invoiceNumber: string; total: string; packaging?: string }) {
   return [
     `Hello ${params.customerName},`,
     `Thank you for shopping at ${params.businessName}.`,
     `Invoice: ${params.invoiceNumber}`,
-    `Total: ${params.total}`,
+    `Total: ${params.total}${params.packaging ? ` (includes ${params.packaging} packaging)` : ""}`,
     `Your invoice PDF is attached.`,
   ].join("\n");
 }
@@ -75,6 +75,7 @@ export async function createManualShareLink(invoiceId: number) {
     businessName: settings.businessName,
     invoiceNumber: invoice.invoiceNumber,
     total: formatMoney(invoice.totalPaise, settings.currency),
+    packaging: invoice.packagingPaise + invoice.bagPaise > 0 ? formatMoney(invoice.packagingPaise + invoice.bagPaise, settings.currency) : undefined,
   });
   const url = buildWaMeUrl(invoice.customerPhone!, message);
 

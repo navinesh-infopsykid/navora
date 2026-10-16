@@ -30,3 +30,4 @@ export const paymentParts = z
   .max(4)
   .nullish();
 export const paymentStatus = z.enum(["PAID", "UNPAID"]);
+export const orderType = z.enum(["DINE_IN", "TAKEAWAY", "DELIVERY"]);

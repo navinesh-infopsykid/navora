@@ -1,10 +1,11 @@
 import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db";
+import { HttpError } from "../lib/errors";
 import { parse } from "../lib/validation";
 import { RANGE_PRESETS } from "../lib/dates";
 import { getDashboard, type DashboardQuery } from "../services/dashboardService";
-import { getSettings, publicSettings, updateSettings } from "../services/settingsService";
+import { getSettings, publicSettings, updatePackagingSettings, updateSettings } from "../services/settingsService";
 import * as whatsapp from "../services/whatsappService";
 
 const router = Router();
@@ -49,6 +50,23 @@ router.put("/settings", async (req, res) => {
     req.body,
   );
   res.json(publicSettings(await updateSettings(body)));
+});
+
+// PUT /api/settings/packaging -> the takeaway/delivery packaging rule
+router.put("/settings/packaging", async (req, res) => {
+  if (!req.user?.isOwner) throw new HttpError(403, "Only the owner can change the packaging rule");
+  const amount = (label: string) => z.number().int().min(0, `${label} cannot be negative`).max(1_000_00, `${label} is too large`);
+  const body = parse(
+    z.object({
+      packagingMinPricePaise: z.number().int().min(0).max(1_00_000_00),
+      packagingBoxPaise: amount("Box charge"),
+      packagingBagPaise: amount("Bag charge"),
+      packagingOnTakeaway: z.boolean(),
+      packagingOnDelivery: z.boolean(),
+    }),
+    req.body,
+  );
+  res.json(publicSettings(await updatePackagingSettings(body)));
 });
 
 // Is automatic WhatsApp sending available? (Never returns the token.)

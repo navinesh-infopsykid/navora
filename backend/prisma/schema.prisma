@@ -38,6 +38,13 @@ enum PaymentMethod {
   SPLIT // invoice paid with more than one method; see its Payment rows
 }
 
+/// How the order leaves the shop. Packaging and the carry bag apply to takeaway/delivery (see BusinessSettings).
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
 enum StockMovementType {
   ADJUSTMENT // manual increase/decrease from the Stock Adjustment page
   SALE // automatic deduction when an invoice is finalized
@@ -66,6 +73,10 @@ model Product {
   lowStockThreshold Int      @default(5)
   // false = the bill-level discount never applies to this item.
   discountAllowed   Boolean  @default(true)
+  /// true = never charge packaging for this item (drinks, dine-in-only items)
+  noPackaging       Boolean  @default(false)
+  /// Custom box charge per unit in paise (e.g. 3000 for a 1 kg cake box). null = use the shop rule.
+  packagingPaise    Int?
   description       String?
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
@@ -101,6 +112,14 @@ model Invoice {
   // FIXED: paise. PERCENT: basis points (1% = 100). NONE: 0.
   discountValue Int            @default(0)
   discountPaise Int            @default(0)
+  orderType     OrderType      @default(DINE_IN)
+  /// Number of items charged a box, and their total box charge (paise)
+  boxCount      Int            @default(0)
+  packagingPaise Int           @default(0)
+  /// Carry bags and their total charge (paise)
+  bagCount      Int            @default(0)
+  bagPaise      Int            @default(0)
+  /// subtotal - discount + packaging + bags
   totalPaise    Int
   paymentStatus PaymentStatus
   paymentMethod PaymentMethod
@@ -134,6 +153,8 @@ model InvoiceItem {
   lineTotalPaise Int
   // Snapshot: was this line eligible for the bill discount when billed?
   discountAllowed Boolean @default(true)
+  /// Box charge for this line (unit charge x quantity), copied at billing time
+  packagingPaise  Int     @default(0)
 
   @@unique([invoiceId, productId])
 }
@@ -178,6 +199,13 @@ model BusinessSettings {
   currency          String   @default("INR")
   invoiceFooter     String   @default("Thank you for your business!")
   invoicePrefix     String   @default("INV")
+  /// Packaging rule: items priced at or above packagingMinPricePaise get packagingBoxPaise per unit,
+  /// plus a mandatory carry bag (packagingBagPaise) per bill, for the order types switched on below.
+  packagingMinPricePaise Int     @default(5000)
+  packagingBoxPaise      Int     @default(500)
+  packagingBagPaise      Int     @default(500)
+  packagingOnTakeaway    Boolean @default(true)
+  packagingOnDelivery    Boolean @default(true)
   // Next invoice serial; incremented atomically inside the invoice transaction.
   nextInvoiceNumber Int      @default(1)
   updatedAt         DateTime @updatedAt
@@ -242,6 +270,8 @@ model HeldCart {
   discountType  DiscountType @default(NONE)
   // FIXED: paise. PERCENT: basis points. Same meaning as Invoice.discountValue.
   discountValue Int          @default(0)
+  orderType     OrderType    @default(DINE_IN)
+  bagCount      Int          @default(0)
   // [{ "productId": 3, "quantity": 2 }, ...]
   items         Json
   createdByName String?

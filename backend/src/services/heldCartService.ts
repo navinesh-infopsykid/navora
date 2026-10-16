@@ -7,7 +7,7 @@
  * - Recall returns the cart and deletes it in one step, so two counters can't
  *   recall the same cart twice.
  */
-import { Prisma, type DiscountType } from "@prisma/client";
+import { Prisma, type DiscountType, type OrderType } from "@prisma/client";
 import { config } from "../config";
 import { prisma } from "../lib/db";
 import { conflict, notFound } from "../lib/errors";
@@ -21,6 +21,8 @@ export interface HeldCartInput {
   discountType: DiscountType;
   discountValue: number;
   items: { productId: number; quantity: number }[];
+  orderType?: OrderType;
+  bagCount?: number | null;
 }
 
 interface HeldItem {
@@ -64,6 +66,8 @@ export async function holdCart(input: HeldCartInput, createdByName?: string) {
         customerPhone: normalizePhone(input.customerPhone, config.defaultCountryCode),
         discountType: input.discountType,
         discountValue: input.discountType === "NONE" ? 0 : input.discountValue,
+        orderType: input.orderType ?? "DINE_IN",
+        bagCount: input.orderType && input.orderType !== "DINE_IN" ? (input.bagCount ?? 1) : 0,
         items: items as unknown as Prisma.InputJsonValue,
         createdByName: createdByName ?? null,
       },

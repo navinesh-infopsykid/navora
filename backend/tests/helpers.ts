@@ -18,7 +18,16 @@ export async function resetDatabase() {
 }
 
 export async function makeProduct(
-  overrides: Partial<{ name: string; sku: string | null; pricePaise: number; stock: number; isActive: boolean; discountAllowed: boolean }> = {},
+  overrides: Partial<{
+    name: string;
+    sku: string | null;
+    pricePaise: number;
+    stock: number;
+    isActive: boolean;
+    discountAllowed: boolean;
+    noPackaging: boolean;
+    packagingPaise: number | null;
+  }> = {},
 ) {
   return prisma.product.create({
     data: {
@@ -29,6 +38,8 @@ export async function makeProduct(
       lowStockThreshold: 2,
       isActive: overrides.isActive ?? true,
       discountAllowed: overrides.discountAllowed ?? true,
+      noPackaging: overrides.noPackaging ?? false,
+      packagingPaise: overrides.packagingPaise ?? null,
     },
   });
 }
